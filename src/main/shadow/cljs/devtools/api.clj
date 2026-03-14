@@ -20,7 +20,8 @@
     [shadow.cljs.devtools.errors :as e]
     [shadow.cljs.devtools.server.supervisor :as super]
     [shadow.cljs.devtools.server.repl-impl :as repl-impl]
-    [shadow.cljs.devtools.server.runtime :as runtime])
+    [shadow.cljs.devtools.server.runtime :as runtime]
+    [shadow.build.targets.shared :as target-shared])
   (:import [java.net Inet4Address NetworkInterface]
            [java.io StringReader]))
 
@@ -435,12 +436,43 @@
         (recur worker)
         ))))
 
+(defn ensure-runtime
+  ([build-id]
+   (ensure-runtime build-id {}))
+  ([build-id {:keys [timeout-ms] :or {timeout-ms 5000}}]
+   (if-let [worker (get-worker build-id)]
+     (let [build-config (-> worker :state-ref deref :build-config)]
+       (cond
+         (seq (repl-runtimes build-id))
+         :already-connected
+
+         (not (target-shared/managed-runtime? build-config))
+         :not-managed
+
+         :else
+         (do
+           (worker/ensure-managed-runtime worker)
+           (loop [deadline (+ (System/currentTimeMillis) timeout-ms)]
+             (cond
+               (seq (repl-runtimes build-id))
+               :connected
+
+               (> (System/currentTimeMillis) deadline)
+               :timeout
+
+               :else
+               (do (Thread/sleep 50)
+                   (recur deadline)))))))
+     :no-worker)))
+
 (defn repl
   ([build-id]
    (repl build-id {}))
   ([build-id {:keys [stop-on-eof] :as opts}]
    (if *nrepl-init*
-     (nrepl-select build-id opts)
+     (do
+       (ensure-runtime build-id)
+       (nrepl-select build-id opts))
      (let [{:keys [supervisor] :as app}
            (runtime/get-instance!)
 
@@ -448,9 +480,11 @@
            (super/get-worker supervisor build-id)]
        (if-not worker
          :no-worker
-         (do (repl-impl/stdin-takeover! worker app opts)
-             (when stop-on-eof
-               (super/stop-worker supervisor build-id))))))))
+         (do
+           (ensure-runtime build-id)
+           (repl-impl/stdin-takeover! worker app opts)
+           (when stop-on-eof
+             (super/stop-worker supervisor build-id))))))))
 
 ;; FIXME: should maybe allow multiple instances
 (defn node-repl
