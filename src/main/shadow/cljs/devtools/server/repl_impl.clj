@@ -8,6 +8,7 @@
     [shadow.cljs.devtools.server.util :as util]
     [shadow.cljs.devtools.server.supervisor :as super]
     [shadow.build.log :as build-log]
+    [shadow.build.targets.shared :as shared]
     [shadow.jvm-log :as log]
     [shadow.build.warnings :as warnings]
     [shadow.cljs.devtools.errors :as errors]
@@ -387,10 +388,10 @@
            build-id
            node-args
            node-command
-           pwd]
+           pwd
+           js-runtime]
     :or {node-args []
-         build-id :node-repl
-         node-command "node"}
+         build-id :node-repl}
     :as opts}]
   (let [script-name
         (str (:cache-root config) File/separatorChar "shadow-node-repl.js")
@@ -424,10 +425,17 @@
           (let [crash
                 (async/promise-chan)
 
+                runtime-argv
+                (if node-command
+                  (into [node-command] node-args)
+                  (into (shared/js-runtime-stdin-argv
+                          {:target :node-script
+                           :js-runtime js-runtime})
+                        node-args))
+
                 node-proc
                 (-> (ProcessBuilder.
-                      (into-array
-                        (into [node-command] node-args)))
+                      (into-array runtime-argv))
                     (.directory
                       ;; nil defaults to JVM working dir
                       (when pwd
