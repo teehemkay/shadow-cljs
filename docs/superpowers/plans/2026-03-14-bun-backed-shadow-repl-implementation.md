@@ -8,11 +8,11 @@
 
 **Goal:** Add opt-in Bun-backed managed runtimes for Node-family `shadow-cljs` builds while preserving `clj-nrepl-eval` + `(shadow/repl :build-id)`.
 
-**Architecture:** Add `:js-runtime` as an opt-in selector on Node-family builds. Pure command/bootstrap helpers live in a new server-side helper namespace plus shared target-spec helpers. `shadow/node-repl` and `:node-test` autorun use the selected executable directly. Watched Node-family builds gain a worker-managed external JS runtime that launches on demand when `shadow/repl` selects a build with explicit `:js-runtime` and no runtime is connected; the worker owns process lifecycle and uses a bootstrap script to load the watched build output under Bun or Node and stay alive for REPL evals.
+**Architecture:** Add `:js-runtime` as an opt-in selector on Node-family builds. Pure command/bootstrap helpers live in a new server-side helper namespace plus shared target-spec helpers. `shadow/node-repl` and `:node-test` autorun use the selected executable directly. Watched Node-family builds gain a worker-managed external JS runtime that launches on demand when `shadow/repl` selects a build with explicit `:js-runtime` and no runtime is connected; the worker owns process lifecycle and uses a CommonJS bootstrap script to load the watched build output under Bun or Node and stay alive for REPL evals. Phase 1 keeps managed watched runtimes scoped to the existing `:node-script` and `:node-test` CommonJS paths; ESM runtime selection remains on the existing dedicated target path and is not expanded here.
 
 **Tech Stack:** Clojure, ClojureScript, shadow-cljs internals, nREPL, Bun, cljs.test
 
-**Design:** `docs/plans/2026-03-14-bun-backed-shadow-repl-design.md`
+**Design:** `docs/superpowers/specs/2026-03-14-bun-backed-shadow-repl-design.md`
 
 ---
 
@@ -107,12 +107,13 @@ This is setup only.
 cd /Users/tmk/dev/my/shadow-cljs
 clj-nrepl-eval -p PORT <<'EOF'
 (require '[shadow.build.targets.shared :as shared] :reload)
-(println (contains? (ns-publics 'shadow.build.targets.shared) 'js-runtime-command))
+(println (contains? (ns-publics 'shadow.build.targets.shared) 'js-runtime-file-argv))
+(println (contains? (ns-publics 'shadow.build.targets.shared) 'js-runtime-stdin-argv))
 (println (contains? (ns-publics 'shadow.build.targets.shared) 'managed-runtime?))
 EOF
 ```
 
-Expected: both lines print `false`.
+Expected: all lines print `false`.
 
 2. **Step 2: Inspect current `:node-script` spec acceptance**
 
@@ -157,6 +158,19 @@ Create `/Users/tmk/dev/my/shadow-cljs/src/repl/shadow/cljs/js_runtime_test.clj`:
   (is (= "node" (shared/js-runtime-command {:target :node-script})))
   (is (= "bun" (shared/js-runtime-command {:target :node-script :js-runtime :bun}))))
 
+(deftest test-js-runtime-argv-selection
+  (is (= ["node"]
+        (shared/js-runtime-stdin-argv {:target :node-script})))
+  (is (= ["bun" "run" "-"]
+        (shared/js-runtime-stdin-argv {:target :node-script :js-runtime :bun})))
+  (is (= ["node" "/tmp/demo.js"]
+        (shared/js-runtime-file-argv {:target :node-script
+                                      :output-to "/tmp/demo.js"})))
+  (is (= ["bun" "run" "/tmp/demo.js"]
+        (shared/js-runtime-file-argv {:target :node-script
+                                      :output-to "/tmp/demo.js"
+                                      :js-runtime :bun}))))
+
 (deftest test-managed-runtime-is-opt-in
   (is (false? (shared/managed-runtime? {:target :node-script})))
   (is (true? (shared/managed-runtime? {:target :node-script :js-runtime :bun})))
@@ -164,16 +178,8 @@ Create `/Users/tmk/dev/my/shadow-cljs/src/repl/shadow/cljs/js_runtime_test.clj`:
 
 (deftest test-bootstrap-source-keeps-runtime-alive
   (let [src (js-runtime/bootstrap-source
-              {:output-to "/tmp/demo.js"
-               :module-format :commonjs})]
+              {:output-to "/tmp/demo.js"})]
     (is (.contains src "require("))
-    (is (.contains src "setInterval"))))
-
-(deftest test-bootstrap-source-supports-esm
-  (let [src (js-runtime/bootstrap-source
-              {:output-to "/tmp/demo.mjs"
-               :module-format :esm})]
-    (is (.contains src "import("))
     (is (.contains src "setInterval"))))
 
 (deftest test-node-script-target-spec-accepts-js-runtime
@@ -191,7 +197,7 @@ cd /Users/tmk/dev/my/shadow-cljs
 clojure -M:dev -e "(require 'clojure.test 'shadow.cljs.js-runtime-test) (clojure.test/run-tests 'shadow.cljs.js-runtime-test)"
 ```
 
-Expected: FAIL because `shared/js-runtime`, `shared/js-runtime-command`, `shared/managed-runtime?`, and `shadow.cljs.devtools.server.js-runtime` do not exist yet.
+Expected: FAIL because `shared/js-runtime`, `shared/js-runtime-command`, `shared/js-runtime-file-argv`, `shared/js-runtime-stdin-argv`, `shared/managed-runtime?`, and `shadow.cljs.devtools.server.js-runtime` do not exist yet.
 
 #### Build (GREEN)
 
@@ -215,6 +221,17 @@ Update `/Users/tmk/dev/my/shadow-cljs/src/main/shadow/build/targets/shared.clj`:
   (case (js-runtime build-config)
     :bun "bun"
     "node"))
+
+(defn js-runtime-stdin-argv [build-config]
+  (case (js-runtime build-config)
+    :bun ["bun" "run" "-"]
+    ["node"]))
+
+(defn js-runtime-file-argv [{:keys [output-to] :as build-config}]
+  (let [output-path (.getPath (io/file output-to))]
+    (case (js-runtime build-config)
+      :bun ["bun" "run" output-path]
+      ["node" output-path])))
 
 (defn managed-runtime? [build-config]
   (and (node-family-target? build-config)
@@ -243,26 +260,20 @@ Create `/Users/tmk/dev/my/shadow-cljs/src/main/shadow/cljs/devtools/server/js_ru
 ```clojure
 (ns shadow.cljs.devtools.server.js-runtime
   (:require
-    [clojure.java.io :as io])
-  (:import
-    [java.io File]))
+    [clojure.java.io :as io]))
 
 (defn bootstrap-file
-  [cache-root build-id module-format]
+  [cache-root build-id]
   (io/file
     cache-root
     (str "shadow-managed-runtime-"
          (name build-id)
-         (if (= :esm module-format) ".mjs" ".cjs"))))
+         ".cjs")))
 
 (defn bootstrap-source
-  [{:keys [output-to module-format]}]
-  (let [abs-output (.getAbsolutePath (io/file output-to))
-        load-form
-        (if (= :esm module-format)
-          (str "await import(" (pr-str (str "file://" abs-output)) ");")
-          (str "require(" (pr-str abs-output) ");"))]
-    (str load-form "\n"
+  [{:keys [output-to]}]
+  (let [abs-output (.getAbsolutePath (io/file output-to))]
+    (str "require(" (pr-str abs-output) ");\n"
          "setInterval(function () {}, 2147483647);\n")))
 ```
 
@@ -277,13 +288,15 @@ clj-nrepl-eval -p PORT <<'EOF'
   :reload)
 (println (shared/js-runtime {:target :node-script}))
 (println (shared/js-runtime-command {:target :node-script :js-runtime :bun}))
+(println (shared/js-runtime-stdin-argv {:target :node-script :js-runtime :bun}))
+(println (shared/js-runtime-file-argv {:target :node-script :output-to "/tmp/demo.js" :js-runtime :bun}))
 (println (shared/managed-runtime? {:target :node-script}))
 (println (shared/managed-runtime? {:target :node-script :js-runtime :bun}))
-(println (js-runtime/bootstrap-source {:output-to "/tmp/demo.js" :module-format :commonjs}))
+(println (js-runtime/bootstrap-source {:output-to "/tmp/demo.js"}))
 EOF
 ```
 
-Expected: `:node`, `"bun"`, `false`, `true`, then bootstrap source containing `require(` and `setInterval`.
+Expected: `:node`, `"bun"`, `["bun" "run" "-"]`, `["bun" "run" "/tmp/demo.js"]`, `false`, `true`, then bootstrap source containing `require(` and `setInterval`.
 
 #### Persist
 
@@ -415,17 +428,21 @@ Update `/Users/tmk/dev/my/shadow-cljs/src/main/shadow/cljs/devtools/server/repl_
          build-id :node-repl}
     :as opts}]
   ...
-  (let [runtime-command
-        (or node-command
-            (shared/js-runtime-command {:target :node-script
-                                        :js-runtime js-runtime}))
+  (let [runtime-argv
+        (if node-command
+          (into [node-command] node-args)
+          (into (shared/js-runtime-stdin-argv
+                  {:target :node-script
+                   :js-runtime js-runtime})
+                node-args))
         ...
         node-proc
         (-> (ProcessBuilder.
-              (into-array
-                (into [runtime-command] node-args)))
+              (into-array runtime-argv))
             ...)]
 ```
+
+Keep explicit `:node-command` override precedence intact; only derive Bun argv when no explicit command override is supplied.
 
 6. **Step 6: Update `:node-test` autorun to use the same selector**
 
@@ -436,7 +453,7 @@ Update `/Users/tmk/dev/my/shadow-cljs/src/main/shadow/build/targets/node_test.cl
   (util/with-logged-time
     [state {:type ::autorun}]
     (let [script-args
-          [(shared/js-runtime-command config) (:output-to config)]
+          (shared/js-runtime-file-argv config)
           proc
           (-> (ProcessBuilder. (into-array script-args))
               (.directory nil)
@@ -534,7 +551,7 @@ Expected: `[]`
 
 3. **Step 3: Extend the focused integration tests with a watched-build case**
 
-Append to `/Users/tmk/dev/my/shadow-cljs/src/repl/shadow/cljs/bun_runtime_test.clj`:
+Update `/Users/tmk/dev/my/shadow-cljs/src/repl/shadow/cljs/bun_runtime_test.clj` to add the extra require and watched-build test:
 
 ```clojure
 (ns shadow.cljs.bun-runtime-test
@@ -546,17 +563,17 @@ Append to `/Users/tmk/dev/my/shadow-cljs/src/repl/shadow/cljs/bun_runtime_test.c
   (if-not (bun-available?)
     (testing "Bun not installed"
       (is true))
-    (do
-      (api/watch
-        {:build-id :bun-watch-test
-         :target :node-test
-         :ns-regexp "test.(.+)-test$"
-         :ui-driven true
-         :output-to "target/bun-watch-test/script.js"
-         :js-runtime :bun}
-        {:autobuild false
-         :sync true})
+    (api/with-runtime
       (try
+        (api/watch
+          {:build-id :bun-watch-test
+           :target :node-test
+           :ns-regexp "test.(.+)-test$"
+           :ui-driven true
+           :output-to "target/bun-watch-test/script.js"
+           :js-runtime :bun}
+          {:autobuild false
+           :sync true})
         (is (= :connected (api/ensure-runtime :bun-watch-test)))
         (is (seq (api/repl-runtimes :bun-watch-test)))
         (finally
@@ -618,21 +635,18 @@ Update `/Users/tmk/dev/my/shadow-cljs/src/main/shadow/cljs/devtools/server/worke
 
     :else
     (let [bootstrap-file
-          (let [module-format
-                (get-in (:build-state worker-state) [:build-options :module-format] :commonjs)]
-            (js-runtime/bootstrap-file cache-root (:build-id build-config) module-format))
-          module-format
-          (get-in (:build-state worker-state) [:build-options :module-format] :commonjs)
+          (js-runtime/bootstrap-file cache-root (:build-id build-config))
           bootstrap-source
           (js-runtime/bootstrap-source
-            {:output-to (:output-to build-config)
-             :module-format module-format})
+            {:output-to (:output-to build-config)})
           _ (spit bootstrap-file bootstrap-source)
           process
           (-> (ProcessBuilder.
                 (into-array
-                  [(shared/js-runtime-command build-config)
-                   (.getAbsolutePath bootstrap-file)]))
+                  (shared/js-runtime-file-argv
+                    {:target :node-script
+                     :output-to (.getAbsolutePath bootstrap-file)
+                     :js-runtime (:js-runtime build-config)})))
               (.directory nil)
               (.start))]
       (assoc worker-state
@@ -655,6 +669,13 @@ Also update worker shutdown cleanup in the existing `:do-shutdown` function to c
 Update `/Users/tmk/dev/my/shadow-cljs/src/main/shadow/cljs/devtools/api.clj`:
 
 ```clojure
+(:require
+  ...
+  [shadow.build.targets.shared :as shared]
+  ...)
+
+...
+
 (defn ensure-runtime
   ([build-id]
    (ensure-runtime build-id {}))
