@@ -20,8 +20,8 @@
     [::main
      ::shared/output-to]
     :opt-un
-    [::shared/output-dir]
-    ))
+    [::shared/output-dir
+     ::shared/js-runtime]))
 
 (defmethod config/target-spec :node-script [_]
   (s/spec ::target))

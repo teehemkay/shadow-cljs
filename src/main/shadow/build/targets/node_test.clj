@@ -1,9 +1,11 @@
 (ns shadow.build.targets.node-test
   (:refer-clojure :exclude (compile flush resolve))
   (:require
+    [clojure.spec.alpha :as s]
     [shadow.build :as build]
     [shadow.build.modules :as modules]
     [shadow.build.classpath :as cp]
+    [shadow.build.config :as config]
     [shadow.build.targets.node-script :as node-script]
     [shadow.cljs.util :as util]
     [shadow.cljs.devtools.server.util :refer (pipe)]
@@ -11,6 +13,17 @@
     [shadow.build.test-util :as tu]
     [shadow.build.targets.shared :as shared]
     [shadow.jvm-log :as log]))
+
+(s/def ::target
+  (s/keys
+    :req-un
+    [::shared/output-to]
+    :opt-un
+    [::shared/output-dir
+     ::shared/js-runtime]))
+
+(defmethod config/target-spec :node-test [_]
+  (s/spec ::target))
 
 (defn configure [{::build/keys [config mode] :as state}]
   (let [runner-ns (or (when-let [main (:main config)]
