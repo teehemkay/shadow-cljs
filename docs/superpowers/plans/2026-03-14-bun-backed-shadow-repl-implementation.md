@@ -10,6 +10,13 @@
 
 **Architecture:** Add `:js-runtime` as an opt-in selector on Node-family builds. Pure command/bootstrap helpers live in a new server-side helper namespace plus shared target-spec helpers. `shadow/node-repl` and `:node-test` autorun use the selected executable directly. Watched Node-family builds gain a worker-managed external JS runtime that launches on demand when `shadow/repl` selects a build with explicit `:js-runtime` and no runtime is connected; the worker owns process lifecycle and uses a CommonJS bootstrap script to load the watched build output under Bun or Node and stay alive for REPL evals. Phase 1 keeps managed watched runtimes scoped to the existing `:node-script` and `:node-test` CommonJS paths; ESM runtime selection remains on the existing dedicated target path and is not expanded here.
 
+**Important implementation notes:**
+- `node-repl*` in `repl_impl.clj` pipes the compiled script into stdin (not a file arg) to control `require()` resolution via `pwd`. For Bun, `bun run -` accepts piped stdin. Verify during implementation that Bun resolves `require()` paths relative to `pwd` when receiving piped input, just as Node does.
+- `autorun-test` in `node_test.clj` uses `util/with-logged-time` which calls `(log state ...)` with a precondition `(build-state? state)` — the state must contain `:shadow.build.data/build-state true` and a `:logger`. Tests that call `autorun-test` directly must provide a valid build state, not a minimal mock.
+- `:node-test` has no explicit `target-spec` registration (falls through to `config/target-spec ::default` which returns `any?`). An explicit spec must be added alongside `:node-script`.
+- The `:do-shutdown` closure lives in `worker.clj` `start` function (not `worker/impl.clj`), so managed runtime cleanup must be called there.
+- `api/repl` has two code paths: nREPL (`*nrepl-init*`) and stdin takeover. Both need `ensure-runtime` integration.
+
 **Tech Stack:** Clojure, ClojureScript, shadow-cljs internals, nREPL, Bun, cljs.test
 
 **Design:** `docs/superpowers/specs/2026-03-14-bun-backed-shadow-repl-design.md`
@@ -98,6 +105,7 @@ This is setup only.
 - Create: `/Users/tmk/dev/my/shadow-cljs/src/repl/shadow/cljs/js_runtime_test.clj`
 - Modify: `/Users/tmk/dev/my/shadow-cljs/src/main/shadow/build/targets/shared.clj`
 - Modify: `/Users/tmk/dev/my/shadow-cljs/src/main/shadow/build/targets/node_script.clj`
+- Modify: `/Users/tmk/dev/my/shadow-cljs/src/main/shadow/build/targets/node_test.clj`
 
 #### Explore
 
@@ -148,6 +156,7 @@ Create `/Users/tmk/dev/my/shadow-cljs/src/repl/shadow/cljs/js_runtime_test.clj`:
     [clojure.spec.alpha :as s]
     [shadow.build.config :as config]
     [shadow.build.targets.node-script]
+    [shadow.build.targets.node-test]
     [shadow.build.targets.shared :as shared]
     [shadow.cljs.devtools.server.js-runtime :as js-runtime]))
 
@@ -174,6 +183,7 @@ Create `/Users/tmk/dev/my/shadow-cljs/src/repl/shadow/cljs/js_runtime_test.clj`:
 (deftest test-managed-runtime-is-opt-in
   (is (false? (shared/managed-runtime? {:target :node-script})))
   (is (true? (shared/managed-runtime? {:target :node-script :js-runtime :bun})))
+  (is (true? (shared/managed-runtime? {:target :node-test :js-runtime :bun})))
   (is (false? (shared/managed-runtime? {:target :browser :js-runtime :bun}))))
 
 (deftest test-bootstrap-source-keeps-runtime-alive
@@ -187,6 +197,12 @@ Create `/Users/tmk/dev/my/shadow-cljs/src/repl/shadow/cljs/js_runtime_test.clj`:
         {:target :node-script
          :main 'demo.script/main
          :output-to "out/demo.js"
+         :js-runtime :bun})))
+
+(deftest test-node-test-target-spec-accepts-js-runtime
+  (is (s/valid? (config/target-spec :node-test)
+        {:target :node-test
+         :output-to "out/test.js"
          :js-runtime :bun})))
 ```
 
@@ -222,12 +238,22 @@ Update `/Users/tmk/dev/my/shadow-cljs/src/main/shadow/build/targets/shared.clj`:
     :bun "bun"
     "node"))
 
-(defn js-runtime-stdin-argv [build-config]
+(defn js-runtime-stdin-argv
+  "Returns argv for launching a JS runtime that reads from stdin.
+   Node accepts piped stdin with no args. Bun requires 'bun run -' to
+   read from stdin. Both resolve require() paths relative to pwd when
+   receiving piped input — verify this for Bun during implementation."
+  [build-config]
   (case (js-runtime build-config)
     :bun ["bun" "run" "-"]
     ["node"]))
 
-(defn js-runtime-file-argv [{:keys [output-to] :as build-config}]
+(defn js-runtime-file-argv
+  "Returns argv for launching a JS runtime with a file argument.
+   Uses 'bun run <file>' rather than 'bun <file>' for consistency
+   with the stdin path and because 'bun run' is the documented
+   general-purpose execution command."
+  [{:keys [output-to] :as build-config}]
   (let [output-path (.getPath (io/file output-to))]
     (case (js-runtime build-config)
       :bun ["bun" "run" output-path]
@@ -236,6 +262,16 @@ Update `/Users/tmk/dev/my/shadow-cljs/src/main/shadow/build/targets/shared.clj`:
 (defn managed-runtime? [build-config]
   (and (node-family-target? build-config)
        (explicit-js-runtime? build-config)))
+
+;; Log a warning when :js-runtime is set on unsupported targets so
+;; the user knows it is being silently ignored. Add this check in
+;; build-configure or the target's configure function:
+;;
+;; (when (and (explicit-js-runtime? build-config)
+;;            (not (node-family-target? build-config)))
+;;   (log/warn ::unsupported-js-runtime
+;;     {:target (:target build-config)
+;;      :js-runtime (:js-runtime build-config)}))
 ```
 
 6. **Step 6: Allow `:node-script` configs to declare `:js-runtime`**
@@ -251,6 +287,37 @@ Update `/Users/tmk/dev/my/shadow-cljs/src/main/shadow/build/targets/node_script.
     :opt-un
     [::shared/output-dir
      ::shared/js-runtime]))
+```
+
+6b. **Step 6b: Add explicit `:node-test` target spec**
+
+Currently `:node-test` has no `defmethod config/target-spec :node-test` — it falls through to the `::default` method which returns `(s/spec any?)`. This means `:js-runtime` is accepted by accident, not by design. Add an explicit spec.
+
+Update `/Users/tmk/dev/my/shadow-cljs/src/main/shadow/build/targets/node_test.clj`, adding after the `ns` form:
+
+```clojure
+(s/def ::target
+  (s/keys
+    :req-un
+    [::shared/output-to]
+    :opt-un
+    [::shared/output-dir
+     ::shared/js-runtime]))
+
+(defmethod config/target-spec :node-test [_]
+  (s/spec ::target))
+```
+
+This requires adding `[clojure.spec.alpha :as s]` and `[shadow.build.config :as config]` to the `:require` vector (they are not currently imported in `node_test.clj`).
+
+Also add a corresponding test in `js_runtime_test.clj`:
+
+```clojure
+(deftest test-node-test-target-spec-accepts-js-runtime
+  (is (s/valid? (config/target-spec :node-test)
+        {:target :node-test
+         :output-to "out/test.js"
+         :js-runtime :bun})))
 ```
 
 7. **Step 7: Add the runtime bootstrap helper namespace**
@@ -315,6 +382,7 @@ Expected: PASS
 cd /Users/tmk/dev/my/shadow-cljs
 git add src/main/shadow/build/targets/shared.clj \
   src/main/shadow/build/targets/node_script.clj \
+  src/main/shadow/build/targets/node_test.clj \
   src/main/shadow/cljs/devtools/server/js_runtime.clj \
   src/repl/shadow/cljs/js_runtime_test.clj
 git commit -m "feat: add opt-in JS runtime selection helpers"
@@ -347,20 +415,27 @@ Expected: `:inspect-source-manually`
 
 2. **Step 2: Prove current `autorun-test` ignores `:js-runtime :bun`**
 
-Create a temporary script that only succeeds under Bun:
+Create a temporary script that only succeeds under Bun.
+
+**Note:** `autorun-test` uses `util/with-logged-time` which calls `(shadow.cljs.util/log state ...)`. That `log` function has a precondition `(build-state? state)` requiring `:shadow.build.data/build-state true` and a `:logger` key. The test state must satisfy this.
 
 ```bash
 cd /Users/tmk/dev/my/shadow-cljs
 mkdir -p target/bun-runtime
 printf 'process.exit(process.versions.bun ? 0 : 17);\n' > target/bun-runtime/needs-bun.js
 clj-nrepl-eval -p PORT <<'EOF'
-(require '[shadow.build.targets.node-test :as node-test] :reload)
-(println
-  (::node-test/exit-code
-    (node-test/autorun-test
-      {:shadow.build/config
-       {:output-to "target/bun-runtime/needs-bun.js"
-        :js-runtime :bun}})))
+(require '[shadow.build.targets.node-test :as node-test]
+         '[shadow.build.log :as build-log]
+         :reload)
+(let [noop-logger (reify build-log/BuildLog (log* [_ _ _]))
+      state {:shadow.build.data/build-state true
+             :logger noop-logger
+             :shadow.build/config
+             {:output-to "target/bun-runtime/needs-bun.js"
+              :js-runtime :bun}}]
+  (println
+    (::node-test/exit-code
+      (node-test/autorun-test state))))
 EOF
 ```
 
@@ -378,10 +453,25 @@ Create `/Users/tmk/dev/my/shadow-cljs/src/repl/shadow/cljs/bun_runtime_test.clj`
     [clojure.java.io :as io]
     [clojure.java.shell :refer [sh]]
     [clojure.test :refer [deftest is testing]]
+    [shadow.build.log :as build-log]
     [shadow.build.targets.node-test :as node-test]))
 
 (defn bun-available? []
-  (zero? (:exit (sh "bun" "--version"))))
+  (try
+    (zero? (:exit (sh "bun" "--version")))
+    (catch Exception _ false)))
+
+(def ^:private noop-logger
+  (reify build-log/BuildLog (log* [_ _ _])))
+
+(defn- make-autorun-state
+  "Builds a minimal state map that satisfies autorun-test's preconditions.
+   autorun-test uses util/with-logged-time which requires a valid build state
+   (build-state? checks for :shadow.build.data/build-state true and :logger)."
+  [config]
+  {:shadow.build.data/build-state true
+   :logger noop-logger
+   :shadow.build/config config})
 
 (deftest test-node-test-autorun-respects-bun
   (if-not (bun-available?)
@@ -393,9 +483,9 @@ Create `/Users/tmk/dev/my/shadow-cljs/src/repl/shadow/cljs/bun_runtime_test.clj`
       (is (= 0
             (::node-test/exit-code
               (node-test/autorun-test
-                {:shadow.build/config
-                 {:output-to (.getPath script)
-                  :js-runtime :bun}})))))))
+                (make-autorun-state
+                  {:output-to (.getPath script)
+                   :js-runtime :bun}))))))))
 ```
 
 4. **Step 4: Run the focused test namespace to confirm RED**
@@ -469,14 +559,18 @@ cd /Users/tmk/dev/my/shadow-cljs
 clj-nrepl-eval -p PORT <<'EOF'
 (require
   '[shadow.build.targets.node-test :as node-test]
+  '[shadow.build.log :as build-log]
   '[shadow.cljs.devtools.server.repl-impl :as repl-impl]
   :reload)
-(println
-  (::node-test/exit-code
-    (node-test/autorun-test
-      {:shadow.build/config
-       {:output-to "target/bun-runtime/needs-bun.js"
-        :js-runtime :bun}})))
+(let [noop-logger (reify build-log/BuildLog (log* [_ _ _]))
+      state {:shadow.build.data/build-state true
+             :logger noop-logger
+             :shadow.build/config
+             {:output-to "target/bun-runtime/needs-bun.js"
+              :js-runtime :bun}}]
+  (println
+    (::node-test/exit-code
+      (node-test/autorun-test state))))
 EOF
 ```
 
@@ -644,9 +738,8 @@ Update `/Users/tmk/dev/my/shadow-cljs/src/main/shadow/cljs/devtools/server/worke
           (-> (ProcessBuilder.
                 (into-array
                   (shared/js-runtime-file-argv
-                    {:target :node-script
-                     :output-to (.getAbsolutePath bootstrap-file)
-                     :js-runtime (:js-runtime build-config)})))
+                    (assoc build-config
+                      :output-to (.getAbsolutePath bootstrap-file)))))
               (.directory nil)
               (.start))]
       (assoc worker-state
@@ -658,11 +751,31 @@ Update `/Users/tmk/dev/my/shadow-cljs/src/main/shadow/cljs/devtools/server/worke
   [worker-state {:keys [reply-to]}]
   (let [next-state (start-managed-runtime worker-state)]
     (when reply-to
-      (>!! reply-to :started))
+      (>!! reply-to :launched))
     next-state))
 ```
 
-Also update worker shutdown cleanup in the existing `:do-shutdown` function to call `stop-managed-runtime`.
+Also update the `:do-shutdown` closure in **`worker.clj`** `start` function (not `impl.clj`) to call `stop-managed-runtime`. The current code at lines 258-263 of `worker.clj` is:
+
+```clojure
+:do-shutdown
+(fn [{:keys [reload-npm] :as state}]
+  (>!! output {:type :worker-shutdown :proc-id proc-id})
+  (when reload-npm
+    (reload-npm/stop reload-npm))
+  state)
+```
+
+Change it to:
+
+```clojure
+:do-shutdown
+(fn [{:keys [reload-npm] :as state}]
+  (>!! output {:type :worker-shutdown :proc-id proc-id})
+  (when reload-npm
+    (reload-npm/stop reload-npm))
+  (impl/stop-managed-runtime state))
+```
 
 7. **Step 7: Add the public API that waits for runtime connection**
 
@@ -706,7 +819,34 @@ Update `/Users/tmk/dev/my/shadow-cljs/src/main/shadow/cljs/devtools/api.clj`:
      :no-worker)))
 ```
 
-Then update `api/repl` to call `ensure-runtime` before entering CLJS mode when the target build has explicit `:js-runtime`.
+Then update `api/repl` to call `ensure-runtime` before entering CLJS mode when the target build has explicit `:js-runtime`. The current `repl` function has two paths — nREPL and stdin takeover. Both need the `ensure-runtime` call before entering the CLJS REPL loop:
+
+```clojure
+(defn repl
+  ([build-id]
+   (repl build-id {}))
+  ([build-id {:keys [stop-on-eof] :as opts}]
+   (if *nrepl-init*
+     (do
+       ;; ensure managed runtime is running before nREPL switches to CLJS
+       (ensure-runtime build-id)
+       (nrepl-select build-id opts))
+     (let [{:keys [supervisor] :as app}
+           (runtime/get-instance!)
+
+           worker
+           (super/get-worker supervisor build-id)]
+       (if-not worker
+         :no-worker
+         (do
+           ;; ensure managed runtime is running before stdin takeover
+           (ensure-runtime build-id)
+           (repl-impl/stdin-takeover! worker app opts)
+           (when stop-on-eof
+             (super/stop-worker supervisor build-id))))))))
+```
+
+`ensure-runtime` is a no-op (returns `:not-managed`) when the build has no explicit `:js-runtime`, so this is safe for all builds.
 
 8. **Step 8: Reload and verify in REPL**
 
@@ -792,14 +932,15 @@ Update `/Users/tmk/dev/my/shadow-cljs/src/main/shadow/txt/repl-help.txt`:
   (shadow/node-repl) - launches a Node-family process and connects to a CLJS REPL
 ```
 
-4. **Step 4: Run the end-to-end Bun-backed REPL verification**
+4. **Step 4: Run the end-to-end Bun-backed REPL verification (MANUAL)**
 
-In one terminal, keep `clojure -M:dev:start` running. Then:
+**This step cannot be automated via `clj-nrepl-eval`.** Switching into CLJS mode via `(shadow/repl :build-id)` changes the nREPL session state so subsequent forms are evaluated as ClojureScript. `clj-nrepl-eval` sends all forms in a single CLJ eval, so `js/process.versions.bun` would fail at CLJ compile time. This must be done interactively in an nREPL-connected editor or terminal REPL.
 
-```bash
-cd /Users/tmk/dev/my/shadow-cljs
-clj-nrepl-eval -p PORT <<'EOF'
-(require '[shadow.cljs.devtools.api :as shadow] :reload)
+In one terminal, keep `clojure -M:dev:start` running. Connect an nREPL client, then evaluate these forms **one at a time**:
+
+```clojure
+;; Form 1 (CLJ): Start the watched build
+(require '[shadow.cljs.devtools.api :as shadow])
 (shadow/watch
   {:build-id :bun-e2e
    :target :node-test
@@ -809,36 +950,30 @@ clj-nrepl-eval -p PORT <<'EOF'
    :js-runtime :bun}
   {:autobuild false
    :sync true})
-EOF
+
+;; Form 2 (CLJ → CLJS): Switch into CLJS mode (this changes session state)
+(shadow/repl :bun-e2e)
+
+;; Form 3 (CLJS): Verify Bun is the runtime
+(println js/process.versions.bun)
+;; Expected: Bun version string
+
+;; Form 4 (CLJS): Verify Bun globals
+(println (exists? js/Bun))
+;; Expected: true
+
+;; Form 5 (CLJS → CLJ): Exit CLJS mode
+:cljs/quit
 ```
 
-Then switch the nREPL session into CLJS mode through the watched build:
+5. **Step 5: Stop the worker**
 
-```bash
-cd /Users/tmk/dev/my/shadow-cljs
-clj-nrepl-eval -p PORT <<'EOF'
-(do
-  (shadow.cljs.devtools.api/repl :bun-e2e)
-  (println js/process.versions.bun)
-  (println (exists? js/Bun)))
-EOF
-```
-
-Expected:
-- first command prints a Bun version string
-- second command prints `true`
-
-5. **Step 5: Return to CLJ mode and stop the worker**
-
-```bash
-cd /Users/tmk/dev/my/shadow-cljs
-clj-nrepl-eval -p PORT <<'EOF'
+```clojure
+;; Form 6 (CLJ): Clean up
 (shadow.cljs.devtools.api/stop-worker :bun-e2e)
-:done
-EOF
 ```
 
-Expected: `:done`
+Expected: `:stopped`
 
 #### Persist
 
