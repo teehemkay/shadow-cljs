@@ -25,6 +25,8 @@
 
 (s/def ::output-to non-empty-string?)
 
+(s/def ::js-runtime #{:node :bun})
+
 (s/def ::http-root non-empty-string?)
 
 (s/def ::http-port pos-int?)
@@ -276,4 +278,34 @@
     state
     (:build-modules state)))
 
+;; JS runtime selection helpers
+
+(defn node-family-target? [{:keys [target]}]
+  (contains? #{:node-script :node-test} target))
+
+(defn js-runtime [{:keys [js-runtime]}]
+  (or js-runtime :node))
+
+(defn explicit-js-runtime? [build-config]
+  (contains? build-config :js-runtime))
+
+(defn js-runtime-command [build-config]
+  (case (js-runtime build-config)
+    :bun "bun"
+    "node"))
+
+(defn js-runtime-stdin-argv [build-config]
+  (case (js-runtime build-config)
+    :bun ["bun" "run" "-"]
+    ["node"]))
+
+(defn js-runtime-file-argv [{:keys [output-to] :as build-config}]
+  (let [output-path (.getPath (io/file output-to))]
+    (case (js-runtime build-config)
+      :bun ["bun" "run" output-path]
+      ["node" output-path])))
+
+(defn managed-runtime? [build-config]
+  (and (node-family-target? build-config)
+       (explicit-js-runtime? build-config)))
 
