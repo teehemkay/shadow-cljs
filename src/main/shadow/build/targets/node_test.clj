@@ -79,7 +79,7 @@
   (util/with-logged-time
     [state {:type ::autorun}]
     (let [script-args
-          ["node" (:output-to config)]
+          (shared/js-runtime-file-argv config)
 
           proc
           (-> (ProcessBuilder. (into-array script-args))
