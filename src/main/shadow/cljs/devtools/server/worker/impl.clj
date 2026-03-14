@@ -27,7 +27,9 @@
     [shadow.cljs.devtools.server.reload-npm :as reload-npm]
     [shadow.build.output :as output]
     [shadow.remote.runtime.obj-support :as obj-support]
-    [shadow.remote.runtime.shared :as shared])
+    [shadow.remote.runtime.shared :as shared]
+    [shadow.build.targets.shared :as target-shared]
+    [shadow.cljs.devtools.server.js-runtime :as js-runtime])
   (:import [java.util UUID]
            [java.io File]))
 
@@ -401,6 +403,55 @@
       (catch Exception e
         (build-failure worker-state e)))))
 
+;; managed runtime lifecycle
+
+(defn stop-managed-runtime [{:keys [managed-runtime] :as worker-state}]
+  (when-let [{:keys [process]} managed-runtime]
+    (.destroy ^Process process))
+  (dissoc worker-state :managed-runtime))
+
+(defn managed-runtime-running? [{:keys [managed-runtime]}]
+  (when-let [{:keys [process]} managed-runtime]
+    (.isAlive ^Process process)))
+
+(defn start-managed-runtime
+  [{:keys [build-config cache-root] :as worker-state}]
+  (cond
+    (not (target-shared/managed-runtime? build-config))
+    worker-state
+
+    (managed-runtime-running? worker-state)
+    worker-state
+
+    :else
+    (let [bootstrap-file
+          (js-runtime/bootstrap-file cache-root (:build-id build-config))
+
+          bootstrap-source
+          (js-runtime/bootstrap-source
+            {:output-to (:output-to build-config)})
+
+          _ (io/make-parents bootstrap-file)
+          _ (spit bootstrap-file bootstrap-source)
+
+          process
+          (-> (ProcessBuilder.
+                (into-array
+                  (target-shared/js-runtime-file-argv
+                    (assoc build-config
+                      :output-to (.getAbsolutePath bootstrap-file)))))
+              (.directory nil)
+              (.start))]
+
+      (log/debug ::managed-runtime-started
+        {:build-id (:build-id build-config)
+         :js-runtime (:js-runtime build-config)})
+
+      (assoc worker-state
+        :managed-runtime
+        {:process process
+         :bootstrap-file bootstrap-file}))))
+
 (defmulti do-proc-control
   (fn [worker-state {:keys [type] :as msg}]
     type))
@@ -409,6 +460,13 @@
   [worker-state {:keys [chan] :as msg}]
   (async/close! chan)
   worker-state)
+
+(defmethod do-proc-control :ensure-managed-runtime
+  [worker-state {:keys [reply-to]}]
+  (let [next-state (start-managed-runtime worker-state)]
+    (when reply-to
+      (>!! reply-to :launched))
+    next-state))
 
 (defn maybe-pick-different-default-runtime [{:keys [runtimes default-runtime-id] :as worker-state} runtime-id]
   (cond

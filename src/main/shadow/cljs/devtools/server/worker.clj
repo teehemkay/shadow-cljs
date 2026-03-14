@@ -64,6 +64,13 @@
     (<!! chan))
   proc)
 
+(defn ensure-managed-runtime
+  [{:keys [proc-control] :as proc}]
+  {:pre [(impl/proc? proc)]}
+  (let [reply-to (async/chan)]
+    (>!! proc-control {:type :ensure-managed-runtime :reply-to reply-to})
+    (<!! reply-to)))
+
 (defn worker-request [{:keys [proc-stop proc-control state-ref] :as worker} request]
   {:pre [(impl/proc? worker)
          (map? request)
@@ -260,7 +267,7 @@
              (>!! output {:type :worker-shutdown :proc-id proc-id})
              (when reload-npm
                (reload-npm/stop reload-npm))
-             state)})
+             (impl/stop-managed-runtime state))})
 
         {:keys [watch-dir watch-exts]
          :or {watch-exts #{"css"}}}
