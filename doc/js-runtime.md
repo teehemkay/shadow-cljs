@@ -5,12 +5,12 @@ This is opt-in per build via the `:js-runtime` config key.
 
 ## Supported targets
 
-| Target | Supported |
-|---|---|
-| `:node-test` | Yes |
-| `:node-script` | Yes |
-| `:esm` | No (not yet) |
-| `:browser` | N/A |
+| Target         | Supported    |
+|----------------+--------------|
+| `:node-test`   | Yes          |
+| `:node-script` | Yes          |
+| `:esm`         | No (not yet) |
+| `:browser`     | N/A          |
 
 ## Configuration
 
