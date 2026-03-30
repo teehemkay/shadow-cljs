@@ -20,6 +20,7 @@
 - **Modify:** `src/main/shadow/build.clj` — call warning helper during configure
 - **Modify:** `src/main/shadow/build/targets/shared.clj` — add warning helper; throw on unrecognized runtime values
 - **Modify:** `doc/js-runtime.md` — add CLI usage section, fix "Valid values" wording
+- **Modify:** `doc/js-runtime-architecture.md` — update spec location description
 - **Test:** `src/test/shadow/cljs/devtools/cli_opts_test.clj` (new) — CLI parsing tests
 - **Test:** `src/test/shadow/build/targets/shared_test.clj` (new) — runtime helper tests
 - **Test:** `src/test/shadow/build/js_runtime_warning_test.clj` (new) — warning behavior tests
@@ -101,12 +102,12 @@ Add to `src/test/shadow/cljs/devtools/cli_opts_test.clj`:
 (deftest js-runtime-lifted-into-config-merge
   (let [{:keys [options]}
         (opts/parse ["watch" "app" "--js-runtime" "bun"])]
-    ;; before the lift, :config-merge should NOT contain {:js-runtime :bun}
-    ;; this test verifies the lift function works
     (is (= :bun (:js-runtime options)))
     (let [lifted (opts/lift-js-runtime options)]
+      ;; :js-runtime is copied into :config-merge for build/configure
       (is (= [{:js-runtime :bun}] (:config-merge lifted)))
-      (is (nil? (:js-runtime lifted)))))
+      ;; :js-runtime is also kept as a top-level key for node-repl
+      (is (= :bun (:js-runtime lifted)))))
 
   ;; when no --js-runtime, config-merge is untouched
   (let [{:keys [options]}
@@ -126,13 +127,12 @@ Add to `src/main/shadow/cljs/devtools/cli_opts.cljc`, after the `conj-vec` funct
 
 ```clojure
 (defn lift-js-runtime
-  "When :js-runtime is present in options, moves it into :config-merge
-   so it flows through build/configure's deep-merge path."
+  "When :js-runtime is present in options, copies it into :config-merge
+   so it flows through build/configure's deep-merge path. The key is kept
+   in options as well because node-repl reads it directly from opts."
   [options]
   (if-let [rt (:js-runtime options)]
-    (-> options
-        (dissoc :js-runtime)
-        (update :config-merge conj-vec {:js-runtime rt}))
+    (update options :config-merge conj-vec {:js-runtime rt})
     options))
 ```
 
@@ -185,7 +185,38 @@ to:
         (assoc opts :options options)
 ```
 
-- [ ] **Step 8: Commit**
+- [ ] **Step 8: Add end-to-end parse+lift test**
+
+Add to `src/test/shadow/cljs/devtools/cli_opts_test.clj` a test that exercises
+the full pipeline as `main` would see it — parse then lift — verifying the
+downstream `options` map has `:js-runtime` in `:config-merge` and not as a
+top-level key:
+
+```clojure
+(deftest parse-then-lift-end-to-end
+  (testing "build action: :js-runtime lands in :config-merge"
+    (let [{:keys [options] :as parsed} (opts/parse ["watch" "app" "--js-runtime" "bun"])
+          lifted (opts/lift-js-runtime options)]
+      (is (= [{:js-runtime :bun}] (:config-merge lifted)))
+      ;; verify the rewritten opts map matches what cli_actual.clj:main produces
+      (let [opts (assoc parsed :options lifted)]
+        (is (= [{:js-runtime :bun}] (get-in opts [:options :config-merge]))))))
+
+  (testing "node-repl: :js-runtime available both in opts and config-merge"
+    ;; node-repl* reads :js-runtime directly from opts to build process argv,
+    ;; AND it flows through config-merge via build/configure. Both must work.
+    (let [{:keys [options]} (opts/parse ["node-repl" "--js-runtime" "bun"])
+          lifted (opts/lift-js-runtime options)]
+      (is (= :bun (:js-runtime lifted)))
+      (is (= [{:js-runtime :bun}] (:config-merge lifted))))))
+```
+
+- [ ] **Step 9: Run tests to verify they pass**
+
+Run: `lein test :only shadow.cljs.devtools.cli-opts-test`
+Expected: PASS
+
+- [ ] **Step 10: Commit**
 
 ```bash
 git add src/test/shadow/cljs/devtools/cli_opts_test.clj \
@@ -539,11 +570,29 @@ with:
 at build time or when starting a REPL.
 ```
 
-- [ ] **Step 3: Commit**
+- [ ] **Step 3: Update architecture doc**
+
+In `doc/js-runtime-architecture.md`, replace lines 41-42:
+
+```markdown
+The spec `::js-runtime` is defined as `#{:node :bun}` in the same namespace
+and included in both the `:node-script` and `:node-test` target specs.
+```
+
+with:
+
+```markdown
+The spec `::js-runtime` is defined as `keyword?` in `shadow.build.config` and
+included as an optional key in the base `::build` spec (accepted by all
+targets). It is also included in the `:node-script` and `:node-test` target
+specs. On non-node-family targets, it is accepted but ignored with a warning.
+```
+
+- [ ] **Step 4: Commit**
 
 ```bash
-git add doc/js-runtime.md
-git commit -m "docs: add CLI usage for --js-runtime flag"
+git add doc/js-runtime.md doc/js-runtime-architecture.md
+git commit -m "docs: add CLI usage for --js-runtime flag, update architecture doc"
 ```
 
 ---
