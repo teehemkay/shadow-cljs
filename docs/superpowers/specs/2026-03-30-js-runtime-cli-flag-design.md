@@ -23,20 +23,20 @@ Add to the global `cli-spec` in `cli_opts.cljc`:
 The value is keywordized (`"bun"` → `:bun`) and placed in the parsed options
 map under `:js-runtime`.
 
-### Build actions (watch / compile / release / cljs-repl)
+### Build actions (watch / compile / release / check / cljs-repl)
 
 When `:js-runtime` is present in the parsed CLI options, inject
-`{:js-runtime <value>}` into the `:config-merge` vector before options are
-passed downstream. This reuses the existing `config-merge` deep-merge path in
-`build/configure` (build.clj line 334).
+`{:js-runtime <value>}` into the `:config-merge` vector in `options`. This
+happens once in `cli_actual.clj:main`, immediately after `(opts/parse args)`,
+before `options` is passed to any downstream path. This reuses the existing
+`config-merge` deep-merge path in `build/configure` (build.clj line 334).
+
+This single injection point covers all paths:
+- `compile` / `release` / `check` via `do-build-command` → `api/*`
+- `watch` / `cljs-repl` via `from-cli` → `super/start-worker`
 
 Effect: `shadow-cljs watch my-build --js-runtime bun` is equivalent to
 `shadow-cljs watch my-build --config-merge '{:js-runtime :bun}'`.
-
-This also covers `shadow-cljs cljs-repl <build>`, which starts a worker via
-`super/start-worker` with the same `options` as `cli-opts` (server.clj:753).
-The `:config-merge` path in `build/configure` (worker/impl.clj:207) applies
-identically, so no separate handling is needed.
 
 ### node-repl
 
@@ -78,8 +78,8 @@ of silently running Node.
 ## Touch points
 
 1. **`cli_opts.cljc`** — add `--js-runtime RUNTIME` to `cli-spec`
-2. **`server.clj` (`from-cli`)** — lift `:js-runtime` from parsed options into
-   `:config-merge` for build actions and cljs-repl
+2. **`cli_actual.clj` (`main`)** — lift `:js-runtime` from parsed options into
+   `:config-merge` in the options map, before any downstream dispatch
 3. **`config.clj`** — add `:js-runtime` as optional key to `::config/build`
    base spec
 4. **`build.clj` (`configure`)** — warn when `:js-runtime` is set on a
