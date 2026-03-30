@@ -291,19 +291,25 @@
 
 (defn js-runtime-command [build-config]
   (case (js-runtime build-config)
+    :node "node"
     :bun "bun"
-    "node"))
+    (throw (ex-info (str "unknown :js-runtime " (pr-str (js-runtime build-config)))
+             {:js-runtime (js-runtime build-config)}))))
 
 (defn js-runtime-stdin-argv [build-config]
   (case (js-runtime build-config)
+    :node ["node"]
     :bun ["bun" "run" "-"]
-    ["node"]))
+    (throw (ex-info (str "unknown :js-runtime " (pr-str (js-runtime build-config)))
+             {:js-runtime (js-runtime build-config)}))))
 
 (defn js-runtime-file-argv [{:keys [output-to] :as build-config}]
   (let [output-path (.getPath (io/file output-to))]
     (case (js-runtime build-config)
+      :node ["node" output-path]
       :bun ["bun" "run" output-path]
-      ["node" output-path])))
+      (throw (ex-info (str "unknown :js-runtime " (pr-str (js-runtime build-config)))
+               {:js-runtime (js-runtime build-config)})))))
 
 (defn managed-runtime? [build-config]
   (and (node-family-target? build-config)
