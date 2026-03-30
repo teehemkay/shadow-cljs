@@ -54,6 +54,15 @@
     [y]
     (conj x y)))
 
+(defn lift-js-runtime
+  "When :js-runtime is present in options, copies it into :config-merge
+   so it flows through build/configure's deep-merge path. The key is kept
+   in options as well because node-repl reads it directly from opts."
+  [options]
+  (if-let [rt (:js-runtime options)]
+    (update options :config-merge conj-vec {:js-runtime rt})
+    options))
+
 (def cli-spec
   ;; FIXME: how do I make this not show up in summary?
   [[nil "--npm" "internal, used by the shadow-cljs npm package"]

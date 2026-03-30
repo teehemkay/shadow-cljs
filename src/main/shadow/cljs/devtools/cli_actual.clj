@@ -130,8 +130,14 @@
       )))
 
 (defn main [& args]
-  (let [{:keys [action builds options summary errors] :as opts}
+  (let [{:keys [action builds summary errors] :as opts}
         (opts/parse args)
+
+        options
+        (opts/lift-js-runtime (:options opts))
+
+        opts
+        (assoc opts :options options)
 
         config
         (config/load-cljs-edn!)]
