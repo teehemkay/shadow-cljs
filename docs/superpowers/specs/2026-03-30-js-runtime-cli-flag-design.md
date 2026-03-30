@@ -23,7 +23,7 @@ Add to the global `cli-spec` in `cli_opts.cljc`:
 The value is keywordized (`"bun"` → `:bun`) and placed in the parsed options
 map under `:js-runtime`.
 
-### Build actions (watch / compile / release)
+### Build actions (watch / compile / release / cljs-repl)
 
 When `:js-runtime` is present in the parsed CLI options, inject
 `{:js-runtime <value>}` into the `:config-merge` vector before options are
@@ -32,6 +32,11 @@ passed downstream. This reuses the existing `config-merge` deep-merge path in
 
 Effect: `shadow-cljs watch my-build --js-runtime bun` is equivalent to
 `shadow-cljs watch my-build --config-merge '{:js-runtime :bun}'`.
+
+This also covers `shadow-cljs cljs-repl <build>`, which starts a worker via
+`super/start-worker` with the same `options` as `cli-opts` (server.clj:753).
+The `:config-merge` path in `build/configure` (worker/impl.clj:207) applies
+identically, so no separate handling is needed.
 
 ### node-repl
 
@@ -52,20 +57,32 @@ in the node family, print a warning to stderr and continue the build. The
 warning is emitted from `shared.clj` where `js-runtime` is resolved, so it
 covers both CLI and config-file usage uniformly.
 
+To prevent spec validation from rejecting `:js-runtime` on non-node targets,
+add `:js-runtime` as an optional key to the base `::config/build` spec in
+`config.clj`. This makes it a legal (but ignored-with-warning) key for all
+build configs.
+
 ### Validation
 
 No CLI-level validation of the runtime value. The string is keywordized and
-passed through; invalid values are caught by existing spec validation
-downstream.
+passed through.
+
+The `shared.clj` helpers (`js-runtime-stdin-argv`, `js-runtime-command`,
+`js-runtime-file-argv`) currently use `case` with a default branch that
+silently falls back to Node for unrecognized values. Change these to throw
+on unknown values so that `--js-runtime nope` produces a clear error instead
+of silently running Node.
 
 ## Touch points
 
 1. **`cli_opts.cljc`** — add `--js-runtime RUNTIME` to `cli-spec`
 2. **`server.clj` (`from-cli`)** — lift `:js-runtime` from parsed options into
-   `:config-merge` for build actions
-3. **`shared.clj`** — warn when `:js-runtime` is set on a non-node-family
-   target
-4. **`node-repl` path** — no changes needed (already works)
+   `:config-merge` for build actions and cljs-repl
+3. **`config.clj`** — add `:js-runtime` as optional key to `::config/build`
+   base spec
+4. **`shared.clj`** — warn when `:js-runtime` is set on a non-node-family
+   target; throw on unrecognized runtime values instead of silent fallback
+5. **`node-repl` path** — no changes needed (already works)
 
 ## Testing
 
@@ -73,5 +90,7 @@ downstream.
 - Integration: `shadow-cljs node-repl --js-runtime bun` launches Bun
 - Integration: `shadow-cljs watch <node-build> --js-runtime bun` overrides
   config
+- Integration: `shadow-cljs cljs-repl <node-build> --js-runtime bun` works
 - Warning: `shadow-cljs watch <browser-build> --js-runtime bun` prints warning
   and continues
+- Error: `shadow-cljs node-repl --js-runtime nope` produces a clear error
