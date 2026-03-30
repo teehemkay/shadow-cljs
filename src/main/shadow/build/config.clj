@@ -16,6 +16,8 @@
 (s/def ::build-hooks
   (s/coll-of ::build-hook :kind vector?))
 
+(s/def ::js-runtime keyword?)
+
 (defmulti target-spec :target :default ::default)
 
 (defmethod target-spec ::default [_]
@@ -27,7 +29,8 @@
     [::build-id
      ::target]
     :opt-un
-    [::build-hooks]))
+    [::build-hooks
+     ::js-runtime]))
 
 (s/def ::build+target
   (s/and
