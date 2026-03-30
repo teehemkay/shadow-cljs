@@ -17,10 +17,12 @@
 - **Modify:** `src/main/shadow/cljs/devtools/cli_opts.cljc` — add `--js-runtime` to `cli-spec`
 - **Modify:** `src/main/shadow/cljs/devtools/cli_actual.clj` — lift `:js-runtime` into `:config-merge`
 - **Modify:** `src/main/shadow/build/config.clj` — add `:js-runtime` spec + optional key to `::build`
-- **Modify:** `src/main/shadow/build.clj` — warn on non-node-family target with `:js-runtime`
-- **Modify:** `src/main/shadow/build/targets/shared.clj` — throw on unrecognized runtime values
+- **Modify:** `src/main/shadow/build.clj` — call warning helper during configure
+- **Modify:** `src/main/shadow/build/targets/shared.clj` — add warning helper; throw on unrecognized runtime values
+- **Modify:** `doc/js-runtime.md` — add CLI usage section, fix "Valid values" wording
 - **Test:** `src/test/shadow/cljs/devtools/cli_opts_test.clj` (new) — CLI parsing tests
 - **Test:** `src/test/shadow/build/targets/shared_test.clj` (new) — runtime helper tests
+- **Test:** `src/test/shadow/build/js_runtime_warning_test.clj` (new) — warning behavior tests
 
 ---
 
@@ -242,48 +244,105 @@ git commit -m "feat: add :js-runtime as optional key in base build spec"
 ### Task 4: Warn on non-node-family builds in `build/configure`
 
 **Files:**
-- Modify: `src/main/shadow/build.clj:354-365`
+- Create: `src/test/shadow/build/js_runtime_warning_test.clj`
+- Modify: `src/main/shadow/build.clj:3-24` (require) and `src/main/shadow/build.clj:354-365`
 
-- [ ] **Step 1: Add the warning**
+The warning point is in `build/configure`, in an imperative block before the
+build-state threading form. This means `util/warn` (which threads through build
+state) is not usable here. The codebase convention for user-facing messages in
+this context is `println` with a `"shadow-cljs - "` prefix, so we use that.
 
-In `src/main/shadow/build.clj`, add after the spec validation block (after line 359, before line 361), and add the `shared` require:
+- [ ] **Step 1: Write the failing test**
 
-First, add to the `:require` block (around line 3):
+Create `src/test/shadow/build/js_runtime_warning_test.clj`:
+
+```clojure
+(ns shadow.build.js-runtime-warning-test
+  (:require
+    [clojure.test :refer (deftest is testing)]
+    [shadow.build.targets.shared :as shared]))
+
+(deftest node-family-target-test
+  (testing "node-family targets"
+    (is (true? (shared/node-family-target? {:target :node-script})))
+    (is (true? (shared/node-family-target? {:target :node-test}))))
+
+  (testing "non-node-family targets"
+    (is (false? (shared/node-family-target? {:target :browser})))
+    (is (false? (shared/node-family-target? {:target :esm})))
+    (is (false? (shared/node-family-target? {:target :react-native})))))
+
+(deftest js-runtime-warning-printed-for-non-node-targets
+  (testing "warning is printed for browser target with :js-runtime"
+    (let [output (with-out-str
+                   (shared/warn-if-js-runtime-ignored
+                     {:target :browser :build-id :app :js-runtime :bun}))]
+      (is (.contains output "js-runtime"))
+      (is (.contains output "ignored"))))
+
+  (testing "no warning for node-script target with :js-runtime"
+    (let [output (with-out-str
+                   (shared/warn-if-js-runtime-ignored
+                     {:target :node-script :build-id :app :js-runtime :bun}))]
+      (is (= "" output))))
+
+  (testing "no warning when :js-runtime is absent"
+    (let [output (with-out-str
+                   (shared/warn-if-js-runtime-ignored
+                     {:target :browser :build-id :app}))]
+      (is (= "" output)))))
+```
+
+- [ ] **Step 2: Run test to verify it fails**
+
+Run: `lein test :only shadow.build.js-runtime-warning-test`
+Expected: FAIL — `shared/warn-if-js-runtime-ignored` does not exist yet.
+
+- [ ] **Step 3: Implement `warn-if-js-runtime-ignored` in `shared.clj`**
+
+In `src/main/shadow/build/targets/shared.clj`, add after the `managed-runtime?` function (after line 310):
+
+```clojure
+(defn warn-if-js-runtime-ignored
+  "Prints a warning when :js-runtime is set on a non-node-family build config."
+  [{:keys [build-id target js-runtime] :as build-config}]
+  (when (and (contains? build-config :js-runtime)
+             (not (node-family-target? build-config)))
+    (println
+      (format "shadow-cljs - warning: :js-runtime %s ignored for build %s, target %s is not a node-family target"
+        (name js-runtime) (name build-id) (name target)))))
+```
+
+- [ ] **Step 4: Run test to verify it passes**
+
+Run: `lein test :only shadow.build.js-runtime-warning-test`
+Expected: PASS
+
+- [ ] **Step 5: Wire `warn-if-js-runtime-ignored` into `build/configure`**
+
+In `src/main/shadow/build.clj`, add to the `:require` block (around line 3):
 
 ```clojure
 [shadow.build.targets.shared :as shared]
 ```
 
-Then add after line 359:
+Then add after line 359 (after the spec validation block, before the `:source-paths` check):
 
 ```clojure
-     (when (and (contains? config :js-runtime)
-                (not (shared/node-family-target? config)))
-       (log/warn ::js-runtime-ignored {:build-id build-id
-                                       :target target
-                                       :js-runtime (:js-runtime config)}))
+     (shared/warn-if-js-runtime-ignored config)
 ```
 
-- [ ] **Step 2: Define the log message**
-
-Add a `build-log/event->str` method in `build.clj` (near the other `event->str` methods, around line 221):
-
-```clojure
-(defmethod build-log/event->str ::js-runtime-ignored
-  [{:keys [build-id target js-runtime]}]
-  (format "build %s: --js-runtime %s ignored, target %s is not a node-family target"
-    (name build-id) (name js-runtime) (name target)))
-```
-
-- [ ] **Step 3: Run tests to verify nothing broke**
+- [ ] **Step 6: Run full test suite**
 
 Run: `lein test`
-Expected: All existing tests still pass.
+Expected: All tests pass.
 
-- [ ] **Step 4: Commit**
+- [ ] **Step 7: Commit**
 
 ```bash
-git add src/main/shadow/build.clj
+git add src/test/shadow/build/js_runtime_warning_test.clj \
+        src/main/shadow/build/targets/shared.clj \
+        src/main/shadow/build.clj
 git commit -m "feat: warn when :js-runtime is set on non-node-family builds"
 ```
 
@@ -435,7 +494,7 @@ git commit -m "feat: throw on unrecognized :js-runtime values instead of silent 
 **Files:**
 - Modify: `doc/js-runtime.md`
 
-- [ ] **Step 1: Add CLI usage to the docs**
+- [ ] **Step 1: Add CLI usage section to the docs**
 
 In `doc/js-runtime.md`, add a new section after the "Standalone node-repl" section (after line 63). Insert:
 
@@ -461,7 +520,26 @@ effect for node-family targets (`:node-script`, `:node-test`); on other
 targets it is ignored with a warning.
 ```
 
-- [ ] **Step 2: Commit**
+- [ ] **Step 2: Update the "Valid values" section**
+
+In `doc/js-runtime.md`, replace the existing "Valid values" section (lines 69-71):
+
+```markdown
+## Valid values
+
+`:js-runtime` accepts `:node` or `:bun`. Any other value will fail spec validation.
+```
+
+with:
+
+```markdown
+## Valid values
+
+`:js-runtime` accepts `:node` or `:bun`. Any other value will produce an error
+at build time or when starting a REPL.
+```
+
+- [ ] **Step 3: Commit**
 
 ```bash
 git add doc/js-runtime.md
