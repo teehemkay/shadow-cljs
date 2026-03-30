@@ -188,9 +188,9 @@ to:
 - [ ] **Step 8: Add end-to-end parse+lift test**
 
 Add to `src/test/shadow/cljs/devtools/cli_opts_test.clj` a test that exercises
-the full pipeline as `main` would see it — parse then lift — verifying the
-downstream `options` map has `:js-runtime` in `:config-merge` and not as a
-top-level key:
+the full parse-then-lift pipeline as `main` would see it, verifying `:js-runtime`
+is both in `:config-merge` (for build/configure) and retained as a top-level
+key (for node-repl):
 
 ```clojure
 (deftest parse-then-lift-end-to-end
@@ -363,12 +363,26 @@ Then add after line 359 (after the spec validation block, before the `:source-pa
      (shared/warn-if-js-runtime-ignored config)
 ```
 
-- [ ] **Step 6: Run full test suite**
+- [ ] **Step 6: Add require-level integration test**
+
+Add to `src/test/shadow/build/js_runtime_warning_test.clj` to verify the
+`shadow.build` namespace loads with its new `shared` require (catches broken
+import):
+
+```clojure
+(deftest shadow-build-loads-with-shared-require
+  ;; This catches a broken require in shadow.build after adding shared.
+  ;; A full build/configure integration test would require bootstrapping
+  ;; the entire build system, which is disproportionate for one call site.
+  (is (some? (require 'shadow.build))))
+```
+
+- [ ] **Step 7: Run full test suite**
 
 Run: `lein test`
 Expected: All tests pass.
 
-- [ ] **Step 7: Commit**
+- [ ] **Step 8: Commit**
 
 ```bash
 git add src/test/shadow/build/js_runtime_warning_test.clj \
