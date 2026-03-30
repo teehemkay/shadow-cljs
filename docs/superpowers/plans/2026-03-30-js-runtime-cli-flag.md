@@ -374,7 +374,8 @@ import):
   ;; This catches a broken require in shadow.build after adding shared.
   ;; A full build/configure integration test would require bootstrapping
   ;; the entire build system, which is disproportionate for one call site.
-  (is (some? (require 'shadow.build))))
+  (require 'shadow.build)
+  (is (some? (find-ns 'shadow.build))))
 ```
 
 - [ ] **Step 7: Run full test suite**
