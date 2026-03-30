@@ -52,15 +52,17 @@ in `shadow-cljs.edn`. This is consistent with how `--source-maps` and
 
 ### Non-node-family builds
 
-When `:js-runtime` is specified (via CLI or config) and the build target is not
-in the node family, print a warning to stderr and continue the build. The
-warning is emitted from `shared.clj` where `js-runtime` is resolved, so it
-covers both CLI and config-file usage uniformly.
-
 To prevent spec validation from rejecting `:js-runtime` on non-node targets,
 add `:js-runtime` as an optional key to the base `::config/build` spec in
 `config.clj`. This makes it a legal (but ignored-with-warning) key for all
 build configs.
+
+When `:js-runtime` is specified (via CLI or config) and the build target is not
+in the node family, print a warning and continue the build. The warning is
+emitted from `build/configure` (build.clj), after the config-merge and spec
+validation steps, where we have both the merged config and the target. This
+runs for every build regardless of target, unlike the `shared.clj` runtime
+helpers which are only called from node-oriented paths.
 
 ### Validation
 
@@ -80,9 +82,11 @@ of silently running Node.
    `:config-merge` for build actions and cljs-repl
 3. **`config.clj`** — add `:js-runtime` as optional key to `::config/build`
    base spec
-4. **`shared.clj`** — warn when `:js-runtime` is set on a non-node-family
-   target; throw on unrecognized runtime values instead of silent fallback
-5. **`node-repl` path** — no changes needed (already works)
+4. **`build.clj` (`configure`)** — warn when `:js-runtime` is set on a
+   non-node-family target
+5. **`shared.clj`** — throw on unrecognized runtime values instead of silent
+   fallback
+6. **`node-repl` path** — no changes needed (already works)
 
 ## Testing
 
