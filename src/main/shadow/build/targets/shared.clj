@@ -309,3 +309,12 @@
   (and (node-family-target? build-config)
        (explicit-js-runtime? build-config)))
 
+(defn warn-if-js-runtime-ignored
+  "Prints a warning when :js-runtime is set on a non-node-family build config."
+  [{:keys [build-id target js-runtime] :as build-config}]
+  (when (and (contains? build-config :js-runtime)
+             (not (node-family-target? build-config)))
+    (println
+      (format "shadow-cljs - warning: :js-runtime %s ignored for build %s, target %s is not a node-family target"
+        (name js-runtime) (name build-id) (name target)))))
+

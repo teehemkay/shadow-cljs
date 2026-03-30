@@ -21,7 +21,8 @@
     [shadow.cljs.devtools.cljs-specs] ;; FIXME: move these
     [shadow.build.macros :as macros]
     [shadow.build.classpath :as classpath]
-    [shadow.build.npm :as npm]))
+    [shadow.build.npm :as npm]
+    [shadow.build.targets.shared :as shared]))
 
 (defn enhance-warnings
   "adds source excerpts to warnings if line information is available"
@@ -357,6 +358,8 @@
        (throw (ex-info "invalid build config" (assoc (s/explain-data ::config/build+target config)
                                                 :tag ::config
                                                 :config config))))
+
+     (shared/warn-if-js-runtime-ignored config)
 
      (when (contains? config :source-paths)
        (throw (ex-info
