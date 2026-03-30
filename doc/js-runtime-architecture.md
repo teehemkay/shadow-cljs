@@ -38,8 +38,10 @@ bottom of `shared.clj`. These are the only functions that inspect the
 | `js-runtime-file-argv` | Returns argv for file execution: `["node" path]` or `["bun" "run" path]` |
 | `managed-runtime?` | True when the build is both a node-family target and has an explicit `:js-runtime` |
 
-The spec `::js-runtime` is defined as `#{:node :bun}` in the same namespace
-and included in both the `:node-script` and `:node-test` target specs.
+The spec `::js-runtime` is defined as `keyword?` in `shadow.build.config` and
+included as an optional key in the base `::build` spec (accepted by all
+targets). It is also included in the `:node-script` and `:node-test` target
+specs. On non-node-family targets, it is accepted but ignored with a warning.
 
 ### Bootstrap — `shadow.cljs.devtools.server.js-runtime`
 

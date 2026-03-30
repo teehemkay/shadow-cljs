@@ -61,6 +61,26 @@ Pass `:js-runtime` in the options map:
 (shadow/node-repl {:js-runtime :bun})
 ```
 
+### CLI usage
+
+Pass `--js-runtime` to any CLI command:
+
+```bash
+# standalone REPL with Bun
+shadow-cljs node-repl --js-runtime bun
+
+# watch a build with Bun
+shadow-cljs watch my-build --js-runtime bun
+
+# compile/release with Bun
+shadow-cljs compile my-build --js-runtime bun
+shadow-cljs release my-build --js-runtime bun
+```
+
+The CLI flag overrides `:js-runtime` in `shadow-cljs.edn`. It only takes
+effect for node-family targets (`:node-script`, `:node-test`); on other
+targets it is ignored with a warning.
+
 ## Requirements
 
 - Bun must be installed and on `PATH`
@@ -68,4 +88,5 @@ Pass `:js-runtime` in the options map:
 
 ## Valid values
 
-`:js-runtime` accepts `:node` or `:bun`. Any other value will fail spec validation.
+`:js-runtime` accepts `:node` or `:bun`. Any other value will produce an error
+at build time or when starting a REPL.
