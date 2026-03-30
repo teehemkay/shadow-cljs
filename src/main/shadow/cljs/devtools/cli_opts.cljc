@@ -81,6 +81,8 @@
    [nil "--force-spawn" "spawn new process, do not connect to running server"]
    [nil "--cli-info" "prints a bunch of information"]
    [nil "--via VIA" "internal option, used by node script" :parse-fn keyword]
+   [nil "--js-runtime RUNTIME" "use alternative JS runtime (e.g. bun) for node-family builds"
+    :parse-fn keyword]
    ["-h" "--help"]])
 
 
