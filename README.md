@@ -1,3 +1,10 @@
+> **Fork: `:js-runtime` (Bun) support**
+>
+> This is a fork of [thheller/shadow-cljs](https://github.com/thheller/shadow-cljs) that adds the `:js-runtime` build option, letting node-family targets (`:node-script`, `:node-test`) run on [Bun](https://bun.sh) instead of Node.js. Published to Clojars as `org.clojars.teehemkay/shadow-cljs`.
+>
+> - [doc/js-runtime.md](doc/js-runtime.md) — configuration, CLI flag, and supported targets
+> - [doc/js-runtime-architecture.md](doc/js-runtime-architecture.md) — internal design and implementation
+
 <img src="https://raw.githubusercontent.com/thheller/shadow-cljs/master/src/main/shadow/cljs/devtools/server/web/resources/img/shadow-cljs.png" width="120" height="120" align="right"/>
 
 [![](https://img.shields.io/badge/Clojurians-shadow--cljs-lightgrey.svg)](https://clojurians.slack.com/messages/C6N245JGG/)
