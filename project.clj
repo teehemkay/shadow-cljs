@@ -1,12 +1,22 @@
-(defproject thheller/shadow-cljs "3.3.7"
+(defproject org.clojars.teehemkay/shadow-cljs "3.3.7-bun"
   :description "CLJS development tools"
-  :url "https://github.com/thheller/shadow-cljs"
+  :url "https://github.com/teehemkay/shadow-cljs"
   :license {:name "Eclipse Public License"
             :url "http://www.eclipse.org/legal/epl-v10.html"}
 
   :repositories
   {"clojars" {:url "https://clojars.org/repo"
               :sign-releases false}}
+
+  ;; Deploy target for the fork. Credentials come from the environment so
+  ;; the deploy token never lands in the repo; CLOJARS_PASSWORD is a Clojars
+  ;; deploy token (not the account password). :sign-releases false because
+  ;; Clojars no longer requires GPG signatures.
+  :deploy-repositories
+  [["clojars" {:url "https://clojars.org/repo"
+               :username :env/clojars_username
+               :password :env/clojars_password
+               :sign-releases false}]]
 
   :javac-options
   ["--release" "21"]
@@ -63,8 +73,7 @@
    [expound "0.9.0"]
    [fipp "0.6.27"]
 
-   [com.bhauman/cljs-test-display "0.1.1"]
-   ]
+   [com.bhauman/cljs-test-display "0.1.1"]]
 
   :source-paths
   ["src/main"]
@@ -137,5 +146,4 @@
      "../oss/clojurescript/src/test/cljs"
      "../oss/clojurescript/src/test/self"
      "../oss/clojurescript/src/test/cljs_cp"
-     "../oss/clojurescript/benchmark"
-     ]}})
+     "../oss/clojurescript/benchmark"]}})
