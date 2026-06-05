@@ -1,0 +1,35 @@
+#+TITLE: Publishing the shadow-cljs fork to Clojars
+#+DATE: [2026-06-05 Fri 14:03]
+#+PROJECT: shadow-cljs
+
+* Context
+
+Context: [[file:~/dev/my/shadow-cljs/docs/clojars-publishing.org][Clojars publishing doc]] (maintenance, post-merge to master).
+Triggered by the end-of-task cyt request, with the dashboard-UI reversal as the session's pivot.
+
+Single-session task: publish this fork of =thheller/shadow-cljs= to Clojars so a downstream project can depend on the fork's =:js-runtime= compiler feature. Branch =wip/clojars-fork-publish= created off =master=, two commits ([[orgit-rev:~/dev/my/shadow-cljs::3667195ea4f632ec21b4ed015832b509496010a6][3667195e]] coordinates+deploy config, [[orgit-rev:~/dev/my/shadow-cljs::191ad0343e9fd3aaa7aaa917bfa0c9d6b4b86bd1][191ad034]] docs), then fast-forwarded into =master=. Now ahead of =origin/master= by 2, push pending. Artifact is live at =org.clojars.teehemkay/shadow-cljs/3.3.7-bun=.
+
+* Project Notes
+
+** Key Decisions
+
+- Coordinates =org.clojars.teehemkay/shadow-cljs=: the upstream =thheller= group is owned and undeployable; =org.clojars.<username>= is auto-verified for any account, so it needs no DNS.
+- Version scheme =<upstream>-bun= (=3.3.7-bun=): keeps the upstream base visible while marking the fork. Released Clojars versions are immutable, so re-release means bumping the suffix.
+- Published a compiler/library-only jar — deliberately skipped =./build-all.sh=. The fork exists for =:js-runtime=, consumed as a build-tool dep, not for the =localhost:9630= dashboard.
+
+** Gotchas
+
+- The =:ui= and =:build-report= shadow-cljs builds output straight into =src/ui-release/...=, which the jar bundles via the =:provided= profile (=src/ui-release= on its source-paths). That's why a plain =lein install= picks them up with no extra wiring — but only if they've been built.
+- The dashboard CSS build (=src/dev/build.clj=, =build/css-release=) indexes a *sibling* =../shadow-grove/src/main= checkout, not the =com.thheller/shadow-grove= Clojars dep. That sibling is absent here, and =packages/ui/node_modules= is empty. So "build the full UI" means reconstructing the maintainer's local dev layout — far more than running one script. The CSS step is REPL-driven (not a CLI command), which compounds it.
+- First-ever deploy of a new artifact prints "Could not find metadata ... maven-metadata.xml in clojars" — this is *not* an error; there's no prior metadata to merge, so lein creates and sends it.
+- Leiningen resolves =:env/clojars_username= to the =CLOJARS_USERNAME= env var (uppercases the name after =env/=); =:password :env/clojars_password= → =CLOJARS_PASSWORD=.
+
+* Technical Insights
+
+** Validate the build before any irreversible publish
+
+Ran =lein install= (full jar + pom + local-repo install) before =lein deploy=. Same build path, but reversible — it surfaces compile/packaging failures while a re-run still costs nothing. Only after that did the immutable upload happen. Cheap insurance against burning a version number on a broken artifact.
+
+** Inspect the artifact, don't assume completeness
+
+=jar tf | grep= on the built jar revealed the dashboard JS was absent before anything shipped. The build "succeeding" said nothing about whether the bundle was complete — the contents listing did. Worth doing whenever a jar's payload comes from generated/committed assets rather than pure source.
