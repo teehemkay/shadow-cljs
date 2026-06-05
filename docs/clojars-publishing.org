@@ -1,0 +1,79 @@
+#+TITLE: Publishing this fork to Clojars
+#+OPTIONS: toc:2 num:nil
+
+* Why this exists
+
+This is a fork of upstream =thheller/shadow-cljs=. The upstream Clojars group =thheller= is owned by the original author and cannot be deployed to, so the fork publishes under a group we control: =org.clojars.teehemkay=. The =org.clojars.<username>= group is auto-verified for any registered Clojars account, so no DNS or domain setup is required.
+
+* Coordinates and versioning
+
+The artifact is =org.clojars.teehemkay/shadow-cljs=. Versions follow the scheme =<upstream-version>-bun=, which keeps the upstream base version visible while marking the artifact unambiguously as this fork (e.g. the first release was =3.3.7-bun=, cut from upstream =3.3.7=). Released versions on Clojars are immutable: a published version can never be overwritten or deleted, so to re-release you bump the suffix.
+
+Consumers depend on it like any Clojars artifact (Clojars is a default repository for both tools.deps and Leiningen):
+
+#+begin_src clojure
+;; deps.edn
+org.clojars.teehemkay/shadow-cljs {:mvn/version "3.3.7-bun"}
+
+;; Leiningen
+[org.clojars.teehemkay/shadow-cljs "3.3.7-bun"]
+#+end_src
+
+* What the published jar contains
+
+The jar is compiler/library-only. It carries the full ClojureScript compiler and tooling — including the fork's =:js-runtime= feature — but not the compiled =localhost:9630= dashboard UI. Building the dashboard into the jar is deliberately skipped because the fork exists to be consumed as a build-tool dependency, not to run the dashboard. See [[#building-the-dashboard-ui-optional]] if a full drop-in is ever needed.
+
+* Deploy configuration
+
+=project.clj= declares a =:deploy-repositories= entry that reads credentials from the environment, so the deploy token never lands in the repository:
+
+#+begin_src clojure
+:deploy-repositories
+[["clojars" {:url "https://clojars.org/repo"
+             :username :env/clojars_username
+             :password :env/clojars_password
+             :sign-releases false}]]
+#+end_src
+
+=:sign-releases false= because Clojars no longer requires GPG signatures. Leiningen resolves =:env/clojars_username= to the =CLOJARS_USERNAME= environment variable and =:env/clojars_password= to =CLOJARS_PASSWORD=.
+
+* The deploy token
+
+Clojars no longer accepts the account password for deploys — a scoped deploy token is required. Create one at https://clojars.org under Dashboard → Deploy Tokens (scope it to =org.clojars.teehemkay/shadow-cljs=). The token is stored in 1Password at =op://devops/clojars-deploy-token/credential= and is read at deploy time via the =op= CLI, so it is never written to the repo, =project.clj=, or shell history. The token must belong to the =teehemkay= account, since the group is created/verified from the deploying account on first push.
+
+Note: with 1Password desktop-app integration, =op read= works (prompting via Touch ID) even when =op whoami= reports "account is not signed in".
+
+* Releasing a new version
+
+1. Bump the version string in =project.clj= to the next =<upstream-version>-bun=.
+2. Validate the build locally first — this is reversible, the deploy is not:
+
+   #+begin_src sh
+   lein install
+   #+end_src
+
+3. Deploy, sourcing the token straight from 1Password into the environment for the single command:
+
+   #+begin_src sh
+   CLOJARS_USERNAME=teehemkay \
+   CLOJARS_PASSWORD="$(op read 'op://devops/clojars-deploy-token/credential')" \
+   lein deploy clojars
+   #+end_src
+
+4. Verify the artifact is live:
+
+   #+begin_src sh
+   curl -s "https://clojars.org/api/artifacts/org.clojars.teehemkay/shadow-cljs" \
+     -H "Accept: application/json"
+   #+end_src
+
+   A successful first deploy of a brand-new artifact prints a harmless "Could not find metadata ... maven-metadata.xml" line before sending the freshly created metadata — there is no prior metadata to merge.
+
+* Building the dashboard UI (optional)
+
+The compiler-only jar omits the dashboard. Producing a full drop-in that ships the =localhost:9630= UI requires reconstructing the maintainer's dev environment:
+
+- A sibling =../shadow-grove= source checkout matching the =com.thheller/shadow-grove= dependency version — the CSS release (=src/dev/build.clj=, =build/css-release=) indexes its =src/main= for shadow-css class definitions.
+- =npm install= in =packages/ui= (codemirror, react 16, xterm, etc.).
+- The REPL-driven CSS build (=build/css-release=), then =lein with-profiles +cljs run -m shadow.cljs.devtools.cli release ui build-report= to compile the dashboard JS into =src/ui-release/=.
+- A fresh =lein install= so the jar picks up the new =src/ui-release= assets, then deploy as above.
