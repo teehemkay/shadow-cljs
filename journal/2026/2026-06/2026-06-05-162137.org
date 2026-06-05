@@ -1,0 +1,48 @@
+#+TITLE: Migrating consumers onto the Clojars shadow-cljs fork
+#+DATE: [2026-06-05 Fri 16:21]
+#+PROJECT: shadow-cljs
+
+* Context
+
+Context: the multi-repo migration of bunbushka/kiln/ik onto the published =org.clojars.teehemkay/shadow-cljs 3.3.7-bun= fork (maintenance, post-push — all three merged to their default branch and pushed).
+Triggered by tmk's "cyt then push" after the kiln branch-pivot surprise was resolved.
+
+Continuation of the earlier publish session (same conversation, after the [[file:~/dev/my/shadow-cljs/docs/clojars-publishing.org][publishing doc]] landed). Three sibling consumers previously pulled shadow-cljs via =:local/root "../shadow-cljs"=; all now pin the Clojars artifact. bunbushka was done first as the proving ground, then kiln + ik. The fork is required, not optional — every consumer's builds use =:js-runtime :bun=, a fork-only key.
+
+* Project Notes
+
+** How the consumers reference shadow-cljs
+
+Each consumer has *two* independent references: the JVM dep in =deps.edn= (the compiler/classpath — this is what moved from =:local/root= to =:mvn/version "3.3.7-bun"=) and the npm =shadow-cljs= CLI in =package.json= (the launcher, stays at =2.28.x=). Only the JVM dep is the "fork"; the npm CLI was never republished and pairs fine with the 3.3.7 JVM. kiln keeps shadow-cljs in a =:cljs= alias (not base =:deps=) so the uberjar/jvm basis excludes it; bunbushka and ik have it in base =:deps=.
+
+** Gotchas
+
+- =:js-runtime :bun= compiling cleanly is *positive proof the fork is on the classpath*, not just that the build works. Upstream shadow-cljs throws on unrecognized =:js-runtime= values; the fork added the key. So a 0-warning compile of these builds doubles as a fork-presence assertion. Cheap, strong signal for migration verification.
+- Scaffolders that compute relative paths with =fs/relativize= must be smoke-tested as *real siblings*, not in =/tmp=. macOS symlinks =/tmp= → =/private/tmp=, so a project generated in =/tmp= got a broken cross-tree path to bunbushka (=../../Users/...= → =/private/Users/...=). Regenerating as a sibling under =~/dev/my/= produced the correct =../bunbushka= and built clean. The bug was the test location, not the generator.
+- ik's =node_modules= was missing the =shadow-cljs= npm CLI (=Script not found "shadow-cljs"=) — a pre-existing gap, fixed with =bun install= (it has a =bun.lock=). Unrelated to the dep change; worth a quick =node_modules/.bin/shadow-cljs= existence check before blaming a ref change.
+
+** Scaffolding refactor (bunbushka)
+
+[[orgit-rev:~/dev/my/bunbushka::0bd70669619b2e65250515f1ebb4e5755016bfad][0bd7066]]: the project template now pins the Clojars ref, which made a chain of generator machinery dead — the sibling-checkout existence validation, the =:shadow-cljs-path= substitution var, and the =lein javac= one-time-compile reminder (the published jar ships compiled classes). Removed all three. The lesson worth keeping: changing the template's dependency *form* (local-root → maven) invalidates generator code that existed only to support local-root. Don't change the template in isolation — grep the generator for everything that fed the old placeholder.
+
+* Technical Insights
+
+** Advance and push a branch that isn't checked out — without disturbing the working tree
+
+kiln was on an active feature branch with uncommitted/feature work; its =main= needed to fast-forward to the migration commit and push. Doing it without a checkout:
+
+#+begin_src sh
+git merge-base --is-ancestor main <commit>   # prove it's a true fast-forward first
+git branch -f main <commit>                   # move main's ref (allowed: main isn't HEAD)
+git push origin main
+#+end_src
+
+This never touches the working tree or the current branch. The =--is-ancestor= guard is what makes =branch -f= safe — without it, =branch -f= would happily create a non-ff divergence.
+
+** =git branch -d= checks merge-into-HEAD, not merge-into-main
+
+After ff-ing =main= to the chore branch while HEAD was a *different* feature branch, =git branch -d chore= refused (it asks "is this merged into the current branch?", and the feature branch hadn't absorbed it). The branch *was* fully merged into =main=. Resolution: assert SHA-equality with =main= and force-delete. Don't reflexively trust =-d='s "not merged" warning when HEAD isn't the integration branch.
+
+** Re-verify per-target state immediately before a batch outward action
+
+The migration was a clean "do the same edit to three repos" — exactly the shape that invites a blind for-loop of merge+push. But kiln had pivoted to a feature branch underneath the task. Checking each repo's branch/working-tree state *right before* the push (not trusting the plan formed three steps earlier) caught it. For any fan-out that ends in pushes, the last step before the irreversible part is a fresh per-item state read.
