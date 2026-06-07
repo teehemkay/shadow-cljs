@@ -4,6 +4,232 @@ Format: [[https://keepachangelog.com/en/1.0.0/][keepachangelog]], grouped by dat
 
 * Changelog
 
+** [2017-06-21 Wed]
+
+*** Added
+- () Add nREPL piggieback emulation for compatibility with editor tooling
+
+*** Changed
+- () Tweak nREPL implementation and client configuration
+
+** [2017-06-20 Tue]
+
+*** Added
+- () Add example test runner prototype
+
+*** Changed
+- () Rework CLI argument handling
+- () Change server port configuration to use random ports by default
+
+*** Fixed
+- () Fix AOT compilation path creation to prevent compile failure
+
+** [2017-06-19 Mon]
+
+*** Fixed
+- () Fix AOT startup issue with temporary workaround
+- () Restore package.json tracking in .gitignore
+
+** [2017-06-18 Sun]
+
+*** Changed
+- () Change CLI script to prefer project-local version over global install
+- () Improve error output formatting for compiler and spec errors
+
+** [2017-06-16 Fri]
+
+*** Added
+- () Add string require and ns form support in REPL
+
+*** Changed
+- () Optimize dev worker to skip recompilation when source files are unchanged
+
+*** Fixed
+- () Fix REPL namespace handling per CLJS-1139
+
+** [2017-06-15 Thu]
+
+*** Changed
+- () Replace HTTP server with lightweight custom router, removing heavy dependencies
+- () Extend warning display to include Closure compiler warnings
+
+*** Fixed
+- () Fix truncated warning output for long lines
+- () Fix non-server CLI mode accidentally broken by server refactor
+- () Fix CLI JavaScript externs
+
+** [2017-06-14 Wed]
+
+*** Added
+- () Add remote API mode to CLI
+
+** [2017-06-13 Tue]
+
+*** Added
+- () Add proper --server mode with socket-REPL remote API
+- () Add inf-clojure integration and node REPL helper
+
+** [2017-06-12 Mon]
+
+*** Removed
+- () Remove built-in Sass compilation (to be re-added as a plugin)
+
+** [2017-06-11 Sun]
+
+*** Added
+- () Add color output for compiler warnings
+
+*** Changed
+- () Improve warning display formatting and reduce noise
+
+** [2017-06-10 Sat]
+
+*** Changed
+- () Enhance warning display with richer formatting
+
+*** Removed
+- () Remove interactive terminal UI mode
+
+** [2017-06-09 Fri]
+
+*** Changed
+- () Refactor workers to share a single HTTP server instead of one per worker
+
+** [2017-06-07 Wed]
+
+*** Changed
+- () Restructure npm packages; lay foundation for JSON-RPC remote API
+
+** [2017-06-04 Sun]
+
+*** Added
+- () Add basic JSON-RPC communication between CLI and dev server
+
+** [2017-06-03 Sat]
+
+*** Added
+- () Add Leiningen project support via :lein config entry in shadow-cljs.edn
+
+*** Changed
+- () Change CLI to search parent directories for shadow-cljs.edn config
+- () Significantly improve startup time in some configurations
+
+*** Fixed
+- () Fix optional :npm build config being broken
+
+** [2017-06-02 Fri]
+
+*** Changed
+- () Rewrite shadow-cljs CLI script in ClojureScript; move all config from package.json into shadow-cljs.edn
+
+** [2017-06-01 Thu]
+
+*** Added
+- () Add --server mode (WIP)
+- () Add relative JS require support in ns forms
+- () Add basic server web dashboard UI (WIP)
+
+** [2017-05-31 Wed]
+
+*** Fixed
+- () Fix compiler warnings to log human-readable output instead of raw data
+
+** [2017-05-30 Tue]
+
+*** Fixed
+- () Fix REPL not working within webpack builds
+- () Fix dev builds for node-script and node-library targets
+- () Fix source map generation to avoid Closure compiler crash on null lineCount
+
+** [2017-05-29 Mon]
+
+*** Added
+- () Add support for direct JS string requires in CLJS ns forms (CLJS-1968)
+
+*** Fixed
+- () Fix npm-module dependency ordering in dev builds
+- () Fix constants optimization pass moving constants to invalid modules
+- () Fix JS module index resolution
+- () Fix hot reload for browser target
+
+** [2017-05-27 Sat]
+
+*** Added
+- () Add :advanced Closure optimization support for :npm-module target
+- () Add REPL support for :npm-module targets (WIP)
+
+*** Changed
+- () Rename CLJS global variable from $ to $CLJS to avoid conflicts with jQuery and others
+- () Use Closure compiler for constants pass instead of manual constants table
+
+** [2017-05-24 Wed]
+
+*** Added
+- () Add Closure compiler pipeline for npm module builds (:simple optimization working)
+
+** [2017-05-23 Tue]
+
+*** Fixed
+- () Fix CLI uberjar source-paths not using default when dependencies key is present
+
+** [2017-05-22 Mon]
+
+*** Changed
+- () Refactor Closure optimization pipeline into discrete steps for extensibility
+
+** [2017-05-21 Sun]
+
+*** Added
+- () Add output-dir support in package.json for npm-module target
+
+*** Changed
+- () Rename config key :public-dir to :output-dir
+- () Rename config key :public-path to :asset-path
+
+** [2017-05-20 Sat]
+
+*** Added
+- () Add code splitting via rescope for webpack-compatible npm module output (WIP)
+
+*** Changed
+- () Consolidate all cache files under target/shadow-cljs/ by default
+- () Improve Closure warning and error output formatting
+
+** [2017-05-19 Fri]
+
+*** Changed
+- () Restructure npm packages into separate shadow-cljs-cli and shadow-cljs-jar packages
+- () Rewrite CLI bin script in ClojureScript
+- () Reduce startup time by ~300ms
+- () Refactor CLI with early REPL support for npm-module target
+
+*** Fixed
+- () Fix classpath scanning to skip malformed jar files (fixes #14)
+
+** [2017-05-18 Thu]
+
+*** Added
+- () Add clojure.spec-based ns form parser
+- () Add npm package require support in ns forms including :refer
+- () Add :npm-require config option to select webpack bundle mode vs direct js/require
+
+** [2017-05-17 Wed]
+
+*** Added
+- () Add proper :import support for npm packages in ns forms
+
+*** Changed
+- () Rename project from shadow-devtools to shadow-cljs
+
+** [2017-05-16 Tue]
+
+*** Added
+- () Add initial shadow-cljs npm package
+- () Add CLI option for Closure type checking (--check)
+
+*** Changed
+- () Simplify runtime setup by appending to cljs/core.js instead of a separate namespace
+
 ** [2017-05-15 Mon]
 
 *** Added
