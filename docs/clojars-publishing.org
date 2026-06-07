@@ -7,21 +7,23 @@ This is a fork of upstream =thheller/shadow-cljs=. The upstream Clojars group =t
 
 * Coordinates and versioning
 
-The artifact is =org.clojars.teehemkay/shadow-cljs=. Versions follow the scheme =<upstream-version>-bun=, which keeps the upstream base version visible while marking the artifact unambiguously as this fork (e.g. the first release was =3.3.7-bun=, cut from upstream =3.3.7=). Released versions on Clojars are immutable: a published version can never be overwritten or deleted, so to re-release you bump the suffix.
+The artifact is =org.clojars.teehemkay/shadow-cljs=. Versions follow the scheme =<upstream-version>-bun=, which keeps the upstream base version visible while marking the artifact unambiguously as this fork (e.g. the first release was =3.3.7-bun=, cut from upstream =3.3.7=; the current release is =3.4.11-bun=, cut from upstream =3.4.11=). Released versions on Clojars are immutable: a published version can never be overwritten or deleted, so to re-release you bump the suffix.
 
 Consumers depend on it like any Clojars artifact (Clojars is a default repository for both tools.deps and Leiningen):
 
 #+begin_src clojure
 ;; deps.edn
-org.clojars.teehemkay/shadow-cljs {:mvn/version "3.3.7-bun"}
+org.clojars.teehemkay/shadow-cljs {:mvn/version "3.4.11-bun"}
 
 ;; Leiningen
-[org.clojars.teehemkay/shadow-cljs "3.3.7-bun"]
+[org.clojars.teehemkay/shadow-cljs "3.4.11-bun"]
 #+end_src
 
 * What the published jar contains
 
-The jar is compiler/library-only. It carries the full ClojureScript compiler and tooling — including the fork's =:js-runtime= feature — but not the compiled =localhost:9630= dashboard UI. Building the dashboard into the jar is deliberately skipped because the fork exists to be consumed as a build-tool dependency, not to run the dashboard. See [[#building-the-dashboard-ui-optional]] if a full drop-in is ever needed.
+The jar is a full drop-in for upstream =thheller/shadow-cljs=. It carries the complete ClojureScript compiler and tooling — including the fork's =:js-runtime= feature — and the compiled =localhost:9630= dashboard UI (the shadow-grove SPA, the build-report UI, CSS, and image assets under =shadow/cljs/ui/dist= and =shadow/cljs/build_report/dist=). The dashboard is served straight from the jar's classpath (=shadow.cljs.devtools.server= mounts =classpath-handler "/shadow/cljs/ui/dist"=), so =shadow-cljs server= / =watch= bring up the running dashboard exactly as upstream does.
+
+The compiled UI assets are not committed to git — they are gitignored, matching upstream — so they are produced by the build below and baked into the jar from the working tree at deploy time. A plain =lein install= from a clean checkout therefore yields a compiler-only jar; a full-drop-in release requires running the dashboard build (see [[*Building the dashboard UI]]) first.
 
 * Deploy configuration
 
@@ -46,13 +48,15 @@ Note: with 1Password desktop-app integration, =op read= works (prompting via Tou
 * Releasing a new version
 
 1. Bump the version string in =project.clj= to the next =<upstream-version>-bun=.
-2. Validate the build locally first — this is reversible, the deploy is not:
+2. Build the dashboard UI into =src/ui-release= (see [[*Building the dashboard UI]]) so the jar is a full drop-in, not compiler-only.
+3. Validate the build locally first — this is reversible, the deploy is not. Confirm the jar carries the dashboard:
 
    #+begin_src sh
    lein install
+   unzip -l ~/.m2/repository/org/clojars/teehemkay/shadow-cljs/<version>/shadow-cljs-<version>.jar | grep ui/dist/js/main.js
    #+end_src
 
-3. Deploy, sourcing the token straight from 1Password into the environment for the single command:
+4. Deploy, sourcing the token straight from 1Password into the environment for the single command:
 
    #+begin_src sh
    CLOJARS_USERNAME=teehemkay \
@@ -60,7 +64,7 @@ Note: with 1Password desktop-app integration, =op read= works (prompting via Tou
    lein deploy clojars
    #+end_src
 
-4. Verify the artifact is live:
+5. Verify the artifact is live:
 
    #+begin_src sh
    curl -s "https://clojars.org/api/artifacts/org.clojars.teehemkay/shadow-cljs" \
@@ -69,11 +73,26 @@ Note: with 1Password desktop-app integration, =op read= works (prompting via Tou
 
    A successful first deploy of a brand-new artifact prints a harmless "Could not find metadata ... maven-metadata.xml" line before sending the freshly created metadata — there is no prior metadata to merge.
 
-* Building the dashboard UI (optional)
+* Building the dashboard UI
 
-The compiler-only jar omits the dashboard. Producing a full drop-in that ships the =localhost:9630= UI requires reconstructing the maintainer's dev environment:
+Producing the full-drop-in jar (one that ships the =localhost:9630= UI) reconstructs the maintainer's dev environment. The key subtlety: the dashboard is built from the shadow-grove *source*, not the =com.thheller/shadow-grove= jar pinned in the =:cljs= profile. That pin (=0.5.0=) is stale even upstream — the current dashboard source requires newer grove namespaces (e.g. =shadow.grove.kv=) that exist only on grove =master=, so building against the 0.5.0 jar fails with "namespace shadow.grove.kv is not available".
 
-- A sibling =../shadow-grove= source checkout matching the =com.thheller/shadow-grove= dependency version — the CSS release (=src/dev/build.clj=, =build/css-release=) indexes its =src/main= for shadow-css class definitions.
-- =npm install= in =packages/ui= (codemirror, react 16, xterm, etc.).
-- The REPL-driven CSS build (=build/css-release=), then =lein with-profiles +cljs run -m shadow.cljs.devtools.cli release ui build-report= to compile the dashboard JS into =src/ui-release/=.
-- A fresh =lein install= so the jar picks up the new =src/ui-release= assets, then deploy as above.
+1. Sibling shadow-grove checkout. Clone =thheller/shadow-grove= as a sibling =../shadow-grove= and check out =master=. grove stopped bumping its version at =1.0.4= (2025-04) but kept developing on =master=; its =master= tip is the commit contemporaneous with the synced shadow-cljs version. =src/dev/build.clj= (=build/css-release=) indexes =../shadow-grove/src/main= for shadow-css class definitions, and the JS build needs grove =master= on its classpath.
+
+2. UI npm deps. =cd packages/ui && npm install= (codemirror, react 16, xterm, etc.).
+
+3. Put grove =master= source on the =:cljs= classpath. *Temporarily* edit the =:cljs= profile in =project.clj=: comment out =[com.thheller/shadow-grove "0.5.0"]= and add =:source-paths ["../shadow-grove/src/main"]=. This is temporary because committing it would make every =+cljs= build (incl. CI) depend on the sibling checkout — revert it once the assets are written. (=lein install=/=deploy= does not activate =:cljs=, so the revert does not affect the jar, which reads the already-built assets from =src/ui-release=.)
+
+4. CSS build → writes =src/ui-release/shadow/cljs/ui/dist/css/ui.css=:
+
+   #+begin_src sh
+   lein with-profiles +cljs run -m clojure.main -e "(require 'build)(build/css-release)"
+   #+end_src
+
+5. JS build → writes the optimized dashboard + build-report JS into =src/ui-release/=:
+
+   #+begin_src sh
+   lein with-profiles +cljs run -m shadow.cljs.devtools.cli release ui build-report
+   #+end_src
+
+6. Revert the temporary =project.clj= edit from step 3, then continue the release (=lein install= / deploy). The dashboard can be smoke-tested before deploy by booting any consumer against the local install and hitting the UI: =clojure -M:<cljs-alias> -m shadow.cljs.devtools.cli server= then =curl -s localhost:9630/css/ui.css=.
