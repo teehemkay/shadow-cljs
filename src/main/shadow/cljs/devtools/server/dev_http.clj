@@ -5,41 +5,18 @@
     [clojure.core.async :as async :refer (>!! <!!)]
     [clojure.spec.alpha :as s]
     [shadow.cljs.devtools.server.sync-db :as sync-db]
+    [shadow.fswatch :as fswatch]
     [shadow.jvm-log :as log]
     [shadow.cljs.devtools.config :as config]
     [shadow.cljs.devtools.server.system-bus :as sys-bus]
     [shadow.cljs :as-alias m]
-    [shadow.undertow :as undertow]
+    [shadow.http.server :as http-server]
     [shadow.http.push-state :as push-state]
     [clojure.string :as str])
-  (:import [io.undertow.server HttpHandler ExchangeCompletionListener]
-           [shadow.undertow ShadowResourceHandler]
-           [java.net BindException]))
-
-(defmethod undertow/build* ::file-recorder [state [id {:keys [on-request] :as props} next]]
-  (assert (vector? next))
-
-  (let [{next :handler :as state}
-        (undertow/build state next)
-
-        completion-listener
-        (reify
-          ExchangeCompletionListener
-          (exchangeEvent [_ exchange next]
-            (when-let [rc (.getAttachment exchange ShadowResourceHandler/RESOURCE_KEY)]
-              (when-let [file (.getFile rc)]
-                (let [uri (.getRequestPath exchange)]
-                  (on-request uri file))))
-            (.proceed next)))
-
-        record-handler
-        (reify
-          HttpHandler
-          (handleRequest [_ exchange]
-            (.addExchangeCompleteListener exchange completion-listener)
-            (.handleRequest next exchange)))]
-
-    (assoc state :handler record-handler)))
+  (:import [java.net URI]
+           [java.util List]
+           [javax.net.ssl SSLContext TrustManager X509TrustManager]
+           [shadow.http.server Config HandlerList HttpHandler ProxyHandler Server]))
 
 (defn require-var [sym]
   (try
@@ -48,9 +25,36 @@
     (catch Exception e
       (throw (ex-info "failed to require-var by name" {:sym sym} e)))))
 
+(defn make-proxy-handler [{:keys [proxy-url] :as config}]
+  (let [uri (URI/create proxy-url)]
+    (if-not (str/starts-with? proxy-url "https")
+      (ProxyHandler. uri nil (:connect-timeout config 5000))
+      (let [;; dev server don't always need to validate certs
+            ;; and shouldn't choke on self-signed certs
+            trust-managers
+            (when (true? (:trust-all-certs config))
+              (let [tm-trust-everything
+                    (reify X509TrustManager
+                      (checkClientTrusted [this chain auth-type])
+                      (checkServerTrusted [this chain auth-type])
+                      (getAcceptedIssuers [this] nil))]
+                (into-array TrustManager [tm-trust-everything])))
+
+            ;; FIXME: I hope this is an actual new context
+            ;; not a globally shared default? only really want to disable
+            ;; cert checking for servers that chose to, not everything
+            ssl-context
+            (doto (SSLContext/getInstance "SSL")
+              (.init
+                nil ;; keymanager use defaults
+                trust-managers ;; nil uses defaults, otherwise trust everything
+                nil ;; securerandom use defaults
+                ))]
+        (ProxyHandler. uri ssl-context (:connect-timeout config 5000))))))
+
 (defn start-build-server
-  [sys-bus ssl-context out
-   {:keys [proxy-url proxy-predicate port host roots handler]
+  [sys-config sys-bus ssl-context out
+   {:keys [proxy-url proxy-predicate port ssl-port host roots handler]
     :or {port 0}
     :as config}]
 
@@ -85,70 +89,59 @@
 
     (try
       (let [req-handler
-            [::undertow/classpath {:root "shadow/cljs/devtools/server/dev_http"}
-             [::undertow/ws-upgrade
-              [::undertow/ws-ring {:handler-fn http-handler-fn}]
-              [::undertow/blocking
-               [::undertow/ring {:handler-fn http-handler-fn}]]]]
+            []
 
             req-handler
-            (cond
-              (not (seq proxy-url))
-              req-handler
+            (conj req-handler
+              (reify HttpHandler
+                (handle [this request]
+                  (.setResponseHeader request "Access-Control-Allow-Origin" "*"))))
 
-              ;; proxy-url but no proxy-predicate, proxy everything
-              (not proxy-predicate)
-              [::undertow/strip-secure-cookies
-               [::undertow/proxy config]]
-
-              ;; proxy-url + proxy-predicate, let predicate decide what to proxy
-              ;; should be symbol pointing to function accepting undertow exchange and returning boolean
-              ;; true if request should use proxy, false will use handler
-              (qualified-symbol? proxy-predicate)
-              (let [pred-var (require-var proxy-predicate)]
-                [::undertow/predicate-match
-                 {:predicate-fn (fn [ex]
-                                  (pred-var ex config))}
-                 [::undertow/strip-secure-cookies
-                  [::undertow/proxy config]]
-                 req-handler])
-
-              :else
-              (throw (ex-info "invalid :proxy-predicate value" {:val proxy-predicate})))
-
+            ;; first try user configured roots
             req-handler
             (reduce
               (fn [req-handler root]
-                (if (str/starts-with? root "classpath:")
-                  [::undertow/classpath (assoc config :root (subs root 10)) req-handler]
+                (cond
+                  (str/starts-with? root "classpath:/")
+                  (conj req-handler (http-server/classpath-handler (subs root 10)))
 
+                  (str/starts-with? root "classpath:")
+                  (conj req-handler (http-server/classpath-handler (str "/" (subs root 10))))
+
+                  :else
                   (let [root-dir (io/file root)]
                     (when-not (.exists root-dir)
                       (io/make-parents (io/file root-dir "index.html")))
-                    [::undertow/file (assoc config :root-dir root-dir) req-handler])))
+                    (conj req-handler (http-server/file-handler root-dir)))))
               req-handler
               (reverse roots))
 
-            files-used-ref
-            (atom {})
+            ;; then try shipped shadow-cljs resources (favicon)
+            req-handler
+            (conj req-handler
+              (http-server/classpath-handler "/shadow/cljs/devtools/server/dev_http"))
 
-            file-request-fn
-            (fn [path file]
-              ;; FIXME: maybe add support for images
-              (when (str/ends-with? path ".css")
-                (let [key [path file]]
-                  (when-not (contains? @files-used-ref key)
-                    ;; doesn't matter if using timestamp of last modified of file
-                    ;; we only want to reload it when it was changed after the access
-                    ;; but don't always record last access since there may be multiple clients
-                    (swap! files-used-ref assoc key (System/currentTimeMillis))))))
+            ;; then try proxy if configured
+            req-handler
+            (if-not (seq proxy-url)
+              req-handler
+              (let [^ProxyHandler proxy-handler (make-proxy-handler config)]
+                (if-not (qualified-symbol? proxy-predicate)
+                  (conj req-handler proxy-handler)
 
-            handler-config
-            [::file-recorder {:on-request file-request-fn}
-             [::undertow/soft-cache
-              [::undertow/headers-inject {:headers {"Access-Control-Allow-Origin" "*"}}
-               [::undertow/compress {}
-                req-handler]]]]
+                  ;; :proxy-predicate pointing to function accepting request and returning boolean
+                  ;; true if request should use proxy, false will use handler
+                  (let [pred-var (require-var proxy-predicate)]
+                    (conj req-handler
+                      (reify HttpHandler
+                        (handle [this request]
+                          (when (pred-var request config)
+                            (.handle proxy-handler request)))))))))
+
+            ;; and if none of those answered defer to ring handler (push-state default)
+            req-handler
+            (conj req-handler
+              (http-server/ring-handler http-handler-fn))
 
             http-options
             (-> {:port port
@@ -157,92 +150,91 @@
                   (and ssl-context (not (false? (:ssl config))))
                   (assoc :ssl-context ssl-context)))
 
-            {:keys [http-port https-port] :as server}
-            (loop [{:keys [port] :as http-options} http-options
-                   fails 0]
-              (let [srv (try
-                          (undertow/start http-options handler-config)
-                          (catch Exception e
-                            (cond
-                              (instance? BindException (.getCause e))
-                              (log/warn :shadow.cljs.devtools.server/tcp-port-unavailable {:port port})
+            server-config
+            (doto (Config.)
+              ;; not using index files by default for file/classpath so it falls through to push-state handler
+              ;; which does this but also may set :push-state/headers
+              (.setUseIndexFiles (get config :use-index-files false)))
 
-                              :else
-                              (log/warn-ex e ::http-start-ex {:http-options http-options :config config}))
-                            nil))]
-                (cond
-                  (some? srv)
-                  srv
+            http-handler
+            (HandlerList/create ^List req-handler)
 
-                  (or (zero? port) (> fails 3))
-                  (throw (ex-info "gave up trying to start server" {}))
+            host
+            (or host "0.0.0.0")
 
-                  :else
-                  (recur (update http-options :port inc) (inc fails))
-                  )))
+            http-server
+            (when (or (not ssl-context)
+                      (and port ssl-port))
+              (try
+                (let [server
+                      (doto (Server. server-config)
+                        (.setHandler http-handler)
+                        (.start host port))]
+
+                  {:server server
+                   :port (.getLocalPort (.getSocket server))
+                   :host host})
+                (catch Exception e
+                  (log/warn-ex e ::http-start-ex {:http-options http-options :config config})
+                  nil)))
+
+            https-server
+            (when ssl-context
+              (try
+                (let [server
+                      (doto (Server. server-config)
+                        (.setHandler http-handler)
+                        (.startSSL ssl-context host (or ssl-port port)))]
+
+                  {:server server
+                   :ssl true
+                   :port (.getLocalPort (.getSocket server))
+                   :host host})
+                (catch Exception e
+                  (log/warn-ex e ::http-start-ex {:http-options http-options :config config})
+                  nil)))
+
+            file-watchers
+            (->> roots
+                 (remove #(str/starts-with? % "classpath"))
+                 (mapv (fn [root]
+                         (let [root-dir (io/file root)]
+                           (fswatch/start (:fs-watch sys-config) [root-dir] #{"css"}
+                             (fn [updates]
+                               (sys-bus/publish! sys-bus ::m/asset-update {:updates (mapv #(str "/" (:name %)) updates)})
+                               ))))))
 
             display-host
             (if (= "0.0.0.0" http-host) "localhost" http-host)
 
             https-url
-            (when https-port
-              (format "https://%s:%s" display-host https-port))
+            (when https-server
+              (format "https://%s:%s" display-host (:port https-server)))
 
             http-url
-            (when http-port
-              (format "http://%s:%s" display-host http-port))
+            (when http-server
+              (format "http://%s:%s" display-host (:port http-server)))]
 
-            file-watch-ref
-            (atom true)
+        (swap! http-info-ref merge {:port (or (:port http-server) (:port https-server))})
 
-            file-watch-fn
-            (fn []
-              (while @file-watch-ref
-                (let [changed
-                      (reduce-kv
-                        (fn [changed key last-access]
-                          (let [[path file] key]
-                            (if-not (.exists file)
-                              ;; deleted files can not be reloaded, no need to notify anyone
-                              (do (swap! files-used-ref dissoc key)
-                                  changed)
-                              (let [new-mod (.lastModified file)]
-                                (if-not (> new-mod last-access)
-                                  changed
-                                  (do (swap! files-used-ref assoc key new-mod)
-                                      (conj changed path)))))))
-
-                        #{}
-                        @files-used-ref)]
-
-                  (when (seq changed)
-                    (sys-bus/publish! sys-bus ::m/asset-update {:updates changed})))
-                (Thread/sleep 500)))
-
-            file-watch-thread
-            (doto (Thread. file-watch-fn "dev-http-file-watch")
-              (.setDaemon true)
-              (.start))]
-
-        (swap! http-info-ref merge {:port http-port})
-
-        (when https-port
+        (when https-server
+          (log/debug ::https-serve (dissoc https-server :server))
           (>!! out {:type :println
-                    :msg (format "shadow-cljs - HTTP server available at %s" https-url)}))
+                    :msg (format "shadow-cljs - :dev-http %s serving %s" https-url (pr-str roots))}))
 
-        (when http-port
+        (when http-server
+          (log/debug ::http-serve (dissoc http-server :server))
           (>!! out {:type :println
-                    :msg (format "shadow-cljs - HTTP server available at %s" http-url)}))
+                    :msg (format "shadow-cljs - :dev-http %s serving %s" http-url (pr-str (or roots proxy-url)))}))
 
-        (log/debug ::http-serve (dissoc server :instance))
+
 
         {:http-url http-url
          :https-url https-url
          :config config
-         :instance server
-         :file-watch-thread file-watch-thread
-         :file-watch-ref file-watch-ref
-         })
+         :file-watchers file-watchers
+         :http-server http-server
+         :https-server https-server})
 
       (catch Exception e
         (log/warn-ex e ::start-ex config)
@@ -397,15 +389,17 @@
         {:devtools
          {:http-root "foo-root"}}}})))
 
-(defn start-servers [sys-bus configs ssl-context out]
-  (into [] (map #(start-build-server sys-bus ssl-context out %)) configs))
+(defn start-servers [config sys-bus configs ssl-context out]
+  (into [] (map #(start-build-server config sys-bus ssl-context out %)) configs))
 
 (defn stop-servers [{:keys [servers] :as state}]
-  (doseq [{:keys [instance file-watch-ref] :as srv} servers]
-    (when instance
-      (undertow/stop instance))
-    (when file-watch-ref
-      (reset! file-watch-ref false)))
+  (doseq [{:keys [http-server https-server file-watchers] :as srv} servers]
+    (doseq [fsw file-watchers]
+      (fswatch/stop fsw))
+    (when http-server
+      (http-server/stop http-server))
+    (when https-server
+      (http-server/stop https-server)))
   (dissoc state :server :configs))
 
 (defn sync-servers [sync-db servers]
@@ -433,7 +427,7 @@
         (transform-server-configs config)
 
         state-ref
-        (-> {:servers (start-servers sys-bus configs ssl-context out)
+        (-> {:servers (start-servers config sys-bus configs ssl-context out)
              :configs configs
              :ssl-context ssl-context
              :sub sub
@@ -452,7 +446,7 @@
                             :msg "shadow-cljs - HTTP config change, restarting servers"})
                   (swap! state-ref stop-servers)
                   (swap! state-ref assoc
-                    :servers (start-servers sys-bus new-configs ssl-context out)
+                    :servers (start-servers config sys-bus new-configs ssl-context out)
                     :configs new-configs)
 
                   (sync-servers sync-db (:servers @state-ref)))

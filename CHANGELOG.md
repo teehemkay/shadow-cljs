@@ -1,7 +1,57 @@
 # Changelog
 
-## [3.3.7](https://github.com/thheller/shadow-cljs/compare/5a961afceb06286bd82b08bc0a344114996b7e93...9647bdf55d01b9c34d568a786a0d3bebc43e78f6) - 2026-03-28
-- [ [`9647b`](https://github.com/thheller/shadow-cljs/commit/9647bdf55d01b9c34d568a786a0d3bebc43e78f6) ] accept any JS file on the classpath during scanning
+## [3.4.11](https://github.com/thheller/shadow-cljs/compare/0ea2b4275bd9754ffe4815fe9d0d6bc18acf48c6...bd2574b96c1170f71ceef90198721179e81b17d9) - 2026-05-18
+- [ [`bd257`](https://github.com/thheller/shadow-cljs/commit/bd2574b96c1170f71ceef90198721179e81b17d9) ] fix for CLJS-2292
+- [ [`0ea2b`](https://github.com/thheller/shadow-cljs/commit/0ea2b4275bd9754ffe4815fe9d0d6bc18acf48c6) ] fix npm-deps config scoping
+
+## [3.4.10](https://github.com/thheller/shadow-cljs/compare/2911c9082dac3a571e5895d14a17c46d642d4f92...2911c9082dac3a571e5895d14a17c46d642d4f92) - 2026-05-12
+- [ [`2911c`](https://github.com/thheller/shadow-cljs/commit/2911c9082dac3a571e5895d14a17c46d642d4f92) ] shadow-http bump
+
+## [3.4.9](https://github.com/thheller/shadow-cljs/compare/7e40d2c6fbc53464ff129b13ceca09da0a9885be...f848d5a11cb5ef072a8e4ccbbb2a5fb415e50fff) - 2026-05-07
+- [ [`f848d`](https://github.com/thheller/shadow-cljs/commit/f848d5a11cb5ef072a8e4ccbbb2a5fb415e50fff) ] clj bump
+- [ [`7e40d`](https://github.com/thheller/shadow-cljs/commit/7e40d2c6fbc53464ff129b13ceca09da0a9885be) ] cljs 1.12.145
+
+## [3.4.8](https://github.com/thheller/shadow-cljs/compare/a9bd397e30d6e1b2d15382e29bc4fa90f6e141e6...a9bd397e30d6e1b2d15382e29bc4fa90f6e141e6) - 2026-05-07
+- [ [`a9bd3`](https://github.com/thheller/shadow-cljs/commit/a9bd397e30d6e1b2d15382e29bc4fa90f6e141e6) ] lol
+
+## [3.4.7](https://github.com/thheller/shadow-cljs/compare/880a61f22df1dea5a3046aa9cb1afcfcfabb9bb5...880a61f22df1dea5a3046aa9cb1afcfcfabb9bb5) - 2026-05-07
+- [ [`880a6`](https://github.com/thheller/shadow-cljs/commit/880a61f22df1dea5a3046aa9cb1afcfcfabb9bb5) ] fix missing :push-state/headers for :dev-http
+
+## [3.4.6](https://github.com/thheller/shadow-cljs/compare/0db144ce3484ca4a6e7c2cb31e9d6a58ada5e794...f4004f7f30d107f809337104965d45eb279a4650) - 2026-04-28
+- [ [`f4004`](https://github.com/thheller/shadow-cljs/commit/f4004f7f30d107f809337104965d45eb279a4650) ] restore lost css reloading
+- [ [`0db14`](https://github.com/thheller/shadow-cljs/commit/0db144ce3484ca4a6e7c2cb31e9d6a58ada5e794) ] don't watch cljs-runtime dirs
+
+## [3.4.5](https://github.com/thheller/shadow-cljs/compare/28420f1e8d6491e61c401bd58613569ee711f361...28420f1e8d6491e61c401bd58613569ee711f361) - 2026-04-26
+- [ [`28420`](https://github.com/thheller/shadow-cljs/commit/28420f1e8d6491e61c401bd58613569ee711f361) ] fix exists? override
+
+## [3.4.4](https://github.com/thheller/shadow-cljs/compare/765137dfe50dfb7232ee2061bb3e7efa426bb1b5...765137dfe50dfb7232ee2061bb3e7efa426bb1b5) - 2026-04-15
+- [ [`76513`](https://github.com/thheller/shadow-cljs/commit/765137dfe50dfb7232ee2061bb3e7efa426bb1b5) ] shadow-http bump
+
+## [3.4.3](https://github.com/thheller/shadow-cljs/compare/d021109f620f69bc12f0a92bc490f70ce395b3ce...d021109f620f69bc12f0a92bc490f70ce395b3ce) - 2026-04-15
+- [ [`d0211`](https://github.com/thheller/shadow-cljs/commit/d021109f620f69bc12f0a92bc490f70ce395b3ce) ] shadow-http bump
+
+## [3.4.2](https://github.com/thheller/shadow-cljs/compare/41259acc45b0dd0daab60f680eee6a32d4828d80...9a5b1f21656658b3ebdaabcdddf7adca6b1b1a18) - 2026-04-14
+- [ [`9a5b1`](https://github.com/thheller/shadow-cljs/commit/9a5b1f21656658b3ebdaabcdddf7adca6b1b1a18) ] some proxy test files
+- [ [`b4021`](https://github.com/thheller/shadow-cljs/commit/b40212988a7e50e1dff64c34e03851713c5ab85a) ] fix http server port finding logic
+- [ [`41259`](https://github.com/thheller/shadow-cljs/commit/41259acc45b0dd0daab60f680eee6a32d4828d80) ] fix start script
+
+## [3.4.1](https://github.com/thheller/shadow-cljs/compare/37bd1d85c88e0e5513600172454ae997424a931e...5eb219f8a139717ecab60f44827a7f01b597ad44) - 2026-04-11
+- [ [`5eb21`](https://github.com/thheller/shadow-cljs/commit/5eb219f8a139717ecab60f44827a7f01b597ad44) ] remove automatic npm-deps install, make manual command instead
+- [ [`37bd1`](https://github.com/thheller/shadow-cljs/commit/37bd1d85c88e0e5513600172454ae997424a931e) ] change user-config handling
+
+## [3.4.0](https://github.com/thheller/shadow-cljs/compare/daba62a41b51026728faa8f658a97987f8dfc774...8df11e72fd1c13a385cc75a717f96be66e1a9f96) - 2026-04-10
+- [ [`8df11`](https://github.com/thheller/shadow-cljs/commit/8df11e72fd1c13a385cc75a717f96be66e1a9f96) ] fix external-index missing imports
+- [ [`dc5d8`](https://github.com/thheller/shadow-cljs/commit/dc5d88824e50ecd568c6edfbc2e19bc20cd4e2f9) ] dependency bumps
+- [ [`4f229`](https://github.com/thheller/shadow-cljs/commit/4f229c5938a9975648f82c9e06b4c7bd325805a7) ] switch to shadow-http, remove shadow-undertow
+- [ [`113a7`](https://github.com/thheller/shadow-cljs/commit/113a7b636e5ad00a446e4bbabd0775a578605b24) ] cleanup container start script
+- [ [`daba6`](https://github.com/thheller/shadow-cljs/commit/daba62a41b51026728faa8f658a97987f8dfc774) ] rewrite fswatch impl, container setup
+
+## [3.3.8](https://github.com/thheller/shadow-cljs/compare/f23162c2df7e1a6a4f3b127b8b1e9a721479d417...f23162c2df7e1a6a4f3b127b8b1e9a721479d417) - 2026-03-30
+- [ [`f2316`](https://github.com/thheller/shadow-cljs/commit/f23162c2df7e1a6a4f3b127b8b1e9a721479d417) ] allow any :refer-global to be used as ns alias
+
+## [3.3.7](https://github.com/thheller/shadow-cljs/compare/5a961afceb06286bd82b08bc0a344114996b7e93...af5bb36237186cfa0d4cc8d993f4eb55387451a9) - 2026-03-28
+- [ [`af5bb`](https://github.com/thheller/shadow-cljs/commit/af5bb36237186cfa0d4cc8d993f4eb55387451a9) ] accept any JS file on the classpath during scanning
+- [ [`e094e`](https://github.com/thheller/shadow-cljs/commit/e094e51686b70279355c3ca36445d31fad5b6714) ] Update README.md (#1253)
 - [ [`e9f37`](https://github.com/thheller/shadow-cljs/commit/e9f37a69e13f983d079c53d683d511f41ffecbaa) ] fix Inspect keyboard nav
 - [ [`f89ec`](https://github.com/thheller/shadow-cljs/commit/f89ec8d3d6b1b6606c7fbdaa150619e8b6891098) ] switch prefered viewer for strings in inspect
 - [ [`e0188`](https://github.com/thheller/shadow-cljs/commit/e0188b78062af2edcd77bab444b8668ab9d38920) ] account for local/root shadow-grove when building css

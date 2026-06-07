@@ -1,10 +1,11 @@
-(ns shadow.cljs.devtools.server.npm-deps
+(ns shadow.cljs.npm-deps
   "utility namespaces for installing npm deps found in deps.cljs files"
   (:require [clojure.edn :as edn]
             [clojure.string :as str]
             [clojure.java.io :as io]
             [clojure.data.json :as json]
             [shadow.cljs.devtools.server.util :as util]
+            [shadow.cljs.devtools.config :as config]
             [shadow.jvm-log :as log]))
 
 (defn dep->str [dep-id]
@@ -49,8 +50,7 @@
     (vals deps-to-install)))
 
 (defn guess-node-package-manager [config]
-  (or (get-in config [:node-modules :managed-by])
-      (get-in config [:npm-deps :managed-by])
+  (or (get-in config [:npm-deps :managed-by])
       (let [bun-lock (io/file "bun.lockb")]
         (when (.exists bun-lock)
           :bun))
@@ -90,8 +90,7 @@
         (io/file install-dir "package.json")
 
         install-cmd
-        (or (get-in config [:node-modules :install-cmd])
-            (get-in config [:npm-deps :install-cmd])
+        (or (get-in config [:npm-deps :install-cmd])
             (case (guess-node-package-manager config)
               :bun
               ["bun" "add" "--exact"]
@@ -137,7 +136,7 @@
 
 (comment
   (install-deps
-    {:node-modules
+    {:npm-deps
      {:install-cmd ["hello" :packages "world"]}}
     [{:id "hello"
       :version "1.2.3"}]))
@@ -174,22 +173,35 @@
       (get-in package-json ["devDependencies" id])
       (get-in package-json ["peerDependencies" id])))
 
-(defn main [{:keys [npm-deps] :as config} opts]
-  (when-not (false? (:install npm-deps))
-    (let [{:keys [install-dir] :or {install-dir "."}}
-          npm-deps
+(defn print-deps [all]
+  (doseq [{:keys [id version url]} all]
+    (prn [:npm-dep id version (str url)]))
+  all)
 
-          package-json
-          (read-package-json install-dir)
+(defn main
+  ([]
+   (main (config/load-cljs-edn!)))
+  ([{:keys [npm-deps] :as config}]
+   (let [{:keys [install-dir] :or {install-dir "."}}
+         npm-deps
 
-          deps
-          (->> (get-deps-from-classpath)
-               (resolve-conflicts)
-               (remove #(is-installed? % package-json)))]
+         package-json
+         (read-package-json install-dir)
 
-      (when (seq deps)
-        (install-deps config deps)
-        ))))
+         deps
+         (->> (get-deps-from-classpath)
+              (sort-by :id)
+              (print-deps)
+              (resolve-conflicts)
+              (remove #(is-installed? % package-json)))]
+
+     (when (seq deps)
+       (install-deps config deps)
+       ))))
+
+;; for clj -M / shadow-cljs run
+(defn -main [& args]
+  (main))
 
 (comment
   (main {:node-via-docker true

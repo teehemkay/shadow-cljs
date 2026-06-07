@@ -1,4 +1,4 @@
-(defproject org.clojars.teehemkay/shadow-cljs "3.3.7-bun"
+(defproject org.clojars.teehemkay/shadow-cljs "3.4.11-bun"
   :description "CLJS development tools"
   :url "https://github.com/teehemkay/shadow-cljs"
   :license {:name "Eclipse Public License"
@@ -27,11 +27,11 @@
    [com.google.code.findbugs/jsr305 "3.0.2"]]
 
   :dependencies
-  [[org.clojure/clojure "1.12.0"]
+  [[org.clojure/clojure "1.12.4"]
 
-   [org.clojure/data.json "2.5.1"]
+   [org.clojure/data.json "2.5.2"]
    [org.clojure/tools.cli "1.1.230"]
-   [org.clojure/tools.reader "1.5.2"]
+   [org.clojure/tools.reader "1.6.0"]
 
    [nrepl "1.3.1"]
    [cider/piggieback "0.6.0"
@@ -43,10 +43,10 @@
    [com.cognitect/transit-clj "1.0.333"]
    [com.cognitect/transit-cljs "0.8.280"]
 
-   [org.clojure/core.async "1.8.741"]
+   [org.clojure/core.async "1.9.865"]
 
    ;; hack to get the latest closure-compiler if CLJS doesn't have it
-   [org.clojure/clojurescript "1.12.134"
+   [org.clojure/clojurescript "1.12.145"
     :exclusions
     [com.google.javascript/closure-compiler
      org.clojure/google-closure-library
@@ -59,16 +59,15 @@
 
    [thheller/shadow-util "0.7.0"]
    [thheller/shadow-client "1.4.0"]
-   [thheller/shadow-undertow "0.3.4"]
    [thheller/shadow-cljsjs "0.0.22"]
 
+   [com.thheller/shadow-http "0.1.8"]
+
    [hiccup "1.0.5"]
-   [ring/ring-core "1.14.1"
+   [ring/ring-core "1.15.3"
     :exclusions
     ;; used by cookie middleware which we don't use
     [clj-time]]
-
-   [io.methvin/directory-watcher "0.19.0"]
 
    [expound "0.9.0"]
    [fipp "0.6.27"]

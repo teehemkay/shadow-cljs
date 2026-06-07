@@ -5,6 +5,7 @@
     [shadow.cljs.devtools.cli]
     [shadow.cljs.devtools.server.fs-watch :as fs-watch]
     [clojure.java.io :as io]
+    [shadow.user]
     [build]))
 
 (defonce css-watch-ref (atom nil))

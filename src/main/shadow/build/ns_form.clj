@@ -599,7 +599,12 @@
         (opts->map (:opts clause))]
 
     (-> ns-info
-        (update :excludes set/union (set exclude))
+        (cond->
+          (seq exclude)
+          (update :excludes set/union (set exclude))
+
+          (seq rename)
+          (update :excludes set/union (set (keys rename))))
         (reduce-kv->
           (merge-rename-fn :renames 'cljs.core)
           rename))))
