@@ -1,0 +1,6 @@
+#+LAST-PROCESSED-COMMIT: bb71624096b6094d9ea235c34cc1aaa19fc2a013
+#+YEAR: 2026
+
+Format: [[https://keepachangelog.com/en/1.0.0/][keepachangelog]], grouped by date.
+
+* Changelog

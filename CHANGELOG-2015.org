@@ -1,0 +1,94 @@
+#+YEAR: 2015
+
+Format: [[https://keepachangelog.com/en/1.0.0/][keepachangelog]], grouped by date.
+
+* Changelog
+
+** [2015-12-19 Sat]
+
+*** Changed
+- () Switch HTTP server from http-kit to Aleph
+
+*** Fixed
+- () Fix Thread leak in CSS file watcher (WatchService was not being closed)
+
+** [2015-12-16 Wed]
+
+*** Added
+- () Experimental devtoolsFormatters support for Chrome DevTools custom object formatting (inspired by cljs-devtools)
+
+** [2015-11-06 Fri]
+
+*** Changed
+- () Adjust for Closure library changes introduced in ClojureScript 1.7.166
+
+*** Fixed
+- () Work around http-kit bug causing memory leak when :cljs/quit is used
+
+** [2015-10-25 Sun]
+
+*** Fixed
+- () Fix live reload to only reload files for modules active on the current page
+
+** [2015-10-23 Fri]
+
+*** Added
+- () Support multiple :js-reload levels (:server, true, false) for finer-grained reload control
+
+*** Fixed
+- () Fix live reload to trigger based on compiled files rather than disk modification timestamps
+
+** [2015-10-18 Sun]
+
+*** Added
+- () Introduce default-compile-callback to simplify the compilation API
+
+*** Changed
+- () Run HTTP server in its own thread; clean up server resources on exit
+- () Improve compile error reporting
+
+*** Fixed
+- () Fix compilation error that caused an infinite recompile loop
+
+** [2015-10-16 Fri]
+
+*** Added
+- () Move Java utility sources (FS, FileWatcher, FakeLispReader) from shadow-build into this repo
+
+** [2015-10-15 Thu]
+
+*** Added
+- () Add initial stacktrace parsing support
+
+*** Changed
+- () Rework live reload to correctly handle changing namespace requires
+
+** [2015-10-14 Wed]
+
+*** Added
+- () Add experimental nREPL integration
+- () Add SCSS/Sass live reloading support
+
+*** Changed
+- () Add optimized release build target configuration
+- () Rework ClojureScript REPL *out* binding
+
+** [2015-10-13 Tue]
+
+*** Added
+- () Add CSS/SCSS infrastructure and test project integration
+
+** [2015-10-12 Mon]
+
+*** Changed
+- () Generalize devtools client to be less browser-specific
+
+** [2015-10-11 Sun]
+
+*** Fixed
+- () Fix various issues in devtools server and SCSS watcher
+
+** [2015-10-09 Fri]
+
+*** Added
+- () Initial extraction from shadow-build into standalone shadow-devtools project

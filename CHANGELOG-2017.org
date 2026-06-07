@@ -1,0 +1,215 @@
+#+YEAR: 2017
+
+Format: [[https://keepachangelog.com/en/1.0.0/][keepachangelog]], grouped by date.
+
+* Changelog
+
+** [2017-05-15 Mon]
+
+*** Added
+- () devtoolsFormatters support for node --inspect
+
+*** Changed
+- () Introduce :work-dir to decouple output from the Leiningen 'target' folder
+- () Enable :emit-constants for :npm-module target
+- () Rename npm package to shadow-cljs (shadow-npm name was taken)
+- () Enable AOT compilation to decrease server load time
+
+*** Fixed
+- () require-file no longer generates absolute paths
+- () Suppress spurious Closure compiler warnings
+- () Fix several issues in :npm-module target
+
+** [2017-05-14 Sun]
+
+*** Added
+- () Introduce :npm-module build target for producing CommonJS modules
+
+*** Fixed
+- () Fix errors getting silently lost during compilation
+- () Fix cljsjs package names that Closure Compiler rejects (e.g. react-leaflet, google-analytics)
+
+** [2017-05-13 Sat]
+
+*** Added
+- () Warn when source files appear to have been moved
+- () Allow disabling the devtools WebSocket connection per target
+
+*** Changed
+- () Merge shadow-build into this repo; upgrade to Clojure 1.9.0-alpha16
+
+** [2017-05-12 Fri]
+
+*** Added
+- () Port :module-hash-names support from shadow-build
+
+*** Fixed
+- () Fix shadow-build regression in this project
+
+** [2017-05-03 Wed]
+
+*** Changed
+- () Reduce thread pool size; too many threads were slowing compilation down
+
+*** Fixed
+- () Temporary fix for self-host/node-related issues in cljs.core handling
+
+** [2017-05-02 Tue]
+
+*** Added
+- () Add api/check entry point (requires CLJS-2019 to be fully useful)
+
+*** Fixed
+- () Fix broken release build caused by accidental code left in compiler
+
+** [2017-04-29 Sat]
+
+*** Added
+- () Add nREPL integration (experimental)
+
+*** Changed
+- () Improve error output formatting
+- () Ignore empty files in fs-watch to reduce spurious recompiles
+
+** [2017-04-28 Fri]
+
+*** Fixed
+- () Fix compiler error that could kill the output message loop, silencing all subsequent log/progress output
+
+** [2017-04-27 Thu]
+
+*** Changed
+- () Introduce shared reusable executor to reduce threadpool proliferation
+- () Improve error message formatting and handling
+
+** [2017-04-26 Wed]
+
+*** Added
+- () Watch shadow-cljs.edn config file and trigger recompiles on changes
+
+** [2017-04-13 Thu]
+
+*** Changed
+- () General cleanup of API and worker internals
+
+** [2017-04-10 Mon]
+
+*** Added
+- () Add org.clojure/java.classpath dependency for Boot build tool support
+
+*** Fixed
+- () Fix config spec validation errors
+- () Always set :print-fn to avoid widespread issues in browser/node builds
+
+** [2017-04-09 Sun]
+
+*** Changed
+- () Move manifest.json generation into this project from shadow-build
+
+*** Fixed
+- () Prevent web workers from calling into devtools client
+- () Exclude web workers from shadow.loader (they cannot be loaded that way)
+
+** [2017-04-07 Fri]
+
+*** Added
+- () Move REPL injection into individual targets, making the worker more general
+
+*** Changed
+- () First pass at substantially better compile error messages
+
+*** Fixed
+- () Gracefully handle missing config file instead of blowing up
+
+** [2017-04-06 Thu]
+
+*** Added
+- () Automatic async module loader generation for code-split browser builds
+
+** [2017-04-05 Wed]
+
+*** Changed
+- () Polish CLI, browser client, and worker WebSocket connection handling
+
+** [2017-04-03 Mon]
+
+*** Added
+- () Add initial README
+
+*** Changed
+- () Reduce unnecessary messages sent to WebSocket client
+
+*** Fixed
+- () Fix naive config merge (profile merging was incorrect)
+- () Fix NPE in server compiler
+
+** [2017-04-02 Sun]
+
+*** Fixed
+- () Fix debug output and console client issues
+
+** [2017-03-30 Thu]
+
+*** Fixed
+- () Restore accidentally commented-out code in API
+
+** [2017-03-22 Wed]
+
+*** Changed
+- () Rename default config file to shadow-cljs.edn (cljs.edn was too generic)
+- () Replace compiler/process multimethod with direct function calls for simplicity
+- () Co-locate config specs with their respective build targets
+
+** [2017-03-15 Wed]
+
+*** Added
+- () Proof-of-concept Language Server Protocol support for ClojureScript (shadow.lang)
+
+*** Changed
+- () Refactor language server into cleaner json-rpc / socket-server split
+
+** [2017-03-14 Tue]
+
+*** Added
+- () Move language server (LSP) experiment into this repo
+
+*** Changed
+- () Rework internal architecture to accommodate SCSS/Sass support
+
+** [2017-03-10 Fri]
+
+*** Fixed
+- () Fix cond-> short-circuit issue that caused browser console code to load in Node builds
+
+** [2017-03-09 Thu]
+
+*** Changed
+- () Rework filesystem watcher (fs-watch) implementation
+
+** [2017-03-02 Thu]
+
+*** Changed
+- () Adjust compiler and targets for upstream shadow-build API changes
+
+** [2017-02-28 Tue]
+
+*** Added
+- () Complete support for custom build targets
+
+** [2017-02-25 Sat]
+
+*** Changed
+- () Simplify worker/REPL interaction and clean up client protocol
+
+** [2017-02-24 Fri]
+
+*** Added
+- () Major rework (next gen): proper node-repl, unified CLI/REPL/embedded/standalone usage modes, new build target system
+
+*** Removed
+- () Remove obsolete pre-rework client artifacts and legacy documentation
+
+** [2017-02-17 Fri]
+
+*** Changed
+- () Update project dependencies
