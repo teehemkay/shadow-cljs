@@ -1,0 +1,50 @@
+#+TITLE: Syncing the Bun fork to upstream 3.4.11 + shipping the dashboard in the Clojars jar
+#+DATE: [2026-06-08 Mon 10:21]
+#+PROJECT: shadow-cljs
+
+* Context
+
+Context: [[file:~/dev/my/shadow-cljs/docs/clojars-publishing.org][clojars-publishing.org]] (maintenance, post-deploy). Triggered by the request to assess and, if doable autonomously, perform a full upstream sync and re-publish =org.clojars.teehemkay/shadow-cljs= as a complete drop-in for the original.
+
+Whole-session reflection, no prior marker. Branch =master= (fast-forwarded through the sync branch, pushed). The fork adds the =:js-runtime :bun= option to node-family targets; it was last cut at =3.3.7-bun= from upstream 3.3.7. This session took it to =3.4.11-bun= (upstream 3.4.11, 49 commits ahead, 36 fork-unique). The three downstream consumers (=kiln=, =bunbushka=, =ik=) all pin the fork and use =:js-runtime :bun=; all were bumped and migrated to =3.4.11-bun= on their =main= branches.
+
+* Project Notes
+
+** Key Decisions
+
+- *Trial-merge before committing.* Ran =git merge --no-commit --no-ff upstream/master= on a throwaway branch first to size the conflict surface. Only =project.clj= conflicted; everything else auto-merged, including the fork's source files sitting next to upstream's =shadow/util= → =shadow/fswatch= rewrite and the =shadow-undertow= → =com.thheller/shadow-http= server swap. The =:js-runtime= feature is genuinely well-isolated — future syncs should be similarly cheap.
+- *project.clj resolution:* keep the fork's coordinate + =:deploy-repositories= + =:repositories=, take upstream's dependency bumps wholesale (clojure 1.12.4, cljs 1.12.145, ring 1.15.3, core.async 1.9.865, shadow-http 0.1.8). Version → =3.4.11-bun=. Commit [[orgit-rev:~/dev/my/shadow-cljs::daca2ca9f8c62dbeee4eb4a64ee55aa597d8ca1d][daca2ca9]].
+- *Ship the dashboard in the jar* (the explicit ask: a "full stand-in"). The previous =3.3.7-bun= was deliberately compiler-only. The serving path was always present — =shadow.cljs.devtools.server/start-http= mounts =classpath-handler "/shadow/cljs/ui/dist"= — the assets were just never built into =src/ui-release=.
+- *Commit the prebuilt assets* ([[orgit-rev:~/dev/my/shadow-cljs::50d8d27bc3da6803d86cf006046aa8fa27813efe][50d8d27b]]) so a bare =lein install= yields the full jar with no UI rebuild. Functional assets only (=ui/dist/js/{main,code-editor}.js=, =ui/dist/css/ui.css=, =build_report/dist/js/{main.js,manifest.edn}=, ~1 MB); =*.js.map= (~6.3 MB) left gitignored per the project's existing =*.js.map= rule — debug-only, regenerated every build, dashboard renders fine without them.
+
+** The dashboard-build gotcha (the one real puzzle)
+
+The dashboard would not compile against the =com.thheller/shadow-grove "0.5.0"= pinned in the =:cljs= profile: =shadow/cljs/ui/db/generic.cljs= requires =shadow.grove.kv=, which does not exist in the 0.5.0 jar. Crucially, *upstream 3.4.11 pins the same stale 0.5.0* — so the pin is wrong even upstream. The maintainer builds the UI against a sibling =../shadow-grove= *source* checkout that is far ahead of the published jar.
+
+Resolution that worked:
+- shadow-grove stopped bumping its version at =1.0.4= (2025-04) but kept developing on =master=; its =master= tip (=2fd1d0e=, 2026-02-18) is the commit contemporaneous with shadow-cljs 3.4.11 (2026-05-18) and *does* carry =shadow.grove.kv= (as =src/main/shadow/grove/kv.cljs=). Cloned it as the sibling and checked out =master=.
+- Temporarily swapped =[com.thheller/shadow-grove "0.5.0"]= for =:source-paths ["../shadow-grove/src/main"]= in the =:cljs= profile, ran the CSS build (=build/css-release=, indexes =../shadow-grove/src/main=) and the JS build (=release ui build-report=), then reverted. =lein install= / =deploy= do not activate =:cljs=, so the revert is safe — the jar reads the already-written =src/ui-release= assets.
+
+Full procedure now lives in [[file:~/dev/my/shadow-cljs/docs/clojars-publishing.org][clojars-publishing.org]] ([[orgit-rev:~/dev/my/shadow-cljs::5f2a40ea358273cd05b5aef3235e0726172bc7a5][5f2a40ea]], [[orgit-rev:~/dev/my/shadow-cljs::e5d3452b3f07c0836900f5b49f1fcdd636d3d403][e5d3452b]]).
+
+** Two separate CSS pipelines — don't confuse them
+
+There are two CSS configs and only one feeds the dashboard. =shadow-cljs.edn= has a top-level =:css= block emitting =ui/dist/main.css= (entries =shadow.cljs.ui.main= + =server.web=). =src/dev/build.clj='s =css-release= emits =ui/dist/css/ui.css= (entries =shadow.cljs.ui.main= + =code-editor=). The dashboard HTML (=server/web.clj=) links =/css/ui.css= → it's =build.clj='s output that matters, not the =shadow-cljs.edn= =:css= block. Indexing grove =master= (vs 0.5.0) grew =ui.css= 35.5 KB → 39.8 KB, a concrete signal the grove version mattered for styling, not just compilation.
+
+** Committing past a directory-level global gitignore
+
+The =src/ui-release= assets were ignored by a *global* =~/.gitignore= rule (=dist=, a bare dir name matching at any depth) plus project rules (=/src/ui-release/**/*.js=, nested =css/*.css=, =*.js.map=). You cannot re-include files under a parent dir that's excluded at directory level without first re-including the dir, and a deeper =.gitignore= (=css/*.css=) overrides root negations — fighting it with =!= negations across multiple files is fragile. =git add -f <files>= is the robust move: it force-adds the named paths past all ignore rules, and once tracked git keeps tracking them (ignore only affects *untracked* files), so future UI rebuilds surface as normal modifications.
+
+** Verification ladder used
+
+Compile (=lein javac=) → unit tests (=lein test=, 51/181, 0 fail) → consumer builds against the local =~/.m2= install (kiln 1304+5, bunbushka 167+esm-smoke, ik 79+esm, all on Bun, 0 warnings) → HTTP serving from the jar (curl =/=, =/css/ui.css=, =/js/main.js= with byte/mime checks) → browser render (shadow-grove SPA initialized, styled, live WebSocket runtime) → post-deploy: re-downloaded the published jar from Clojars and confirmed contents → reproducibility: built the jar in a fresh detached worktree of =master= and confirmed the dashboard is present with no build ceremony.
+
+* Technical Insights
+
+** A version pin can be silently stale when the published artifact's main consumers never exercise it
+
+=shadow-grove 0.5.0= is pinned in shadow-cljs's =:cljs= profile and that's what library consumers resolve — but library consumers never build the dashboard, so nobody notices the pin is ~5 years behind the source the dashboard actually needs. The pin "works" precisely because the thing it's wrong for (the UI build) is a maintainer-local step, not part of the published artifact's normal use. Lesson: when a dependency is only exercised by an out-of-band build step, its declared version drifts from reality unnoticed. Treat such pins as documentation, not truth, and verify against the source the build step actually consumes.
+
+** Escalating verification for a "drop-in"/"stand-in" claim
+
+"Is X a drop-in replacement?" deserves a verification ladder, not a single check: it compiles → its own tests pass → real downstream consumers build/test against it → the artifact serves/runs from its packaged form (not the dev tree) → it behaves correctly at runtime (render/exec) → the *published* copy is byte-checked → it's reproducible from a clean checkout. Each rung catches a failure class the previous can't. The "serve from the jar, not the working tree" and "build in a fresh worktree" rungs specifically catch packaging/classpath bugs that all dev-tree testing is blind to.
