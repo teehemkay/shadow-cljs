@@ -23,7 +23,7 @@ org.clojars.teehemkay/shadow-cljs {:mvn/version "3.4.11-bun"}
 
 The jar is a full drop-in for upstream =thheller/shadow-cljs=. It carries the complete ClojureScript compiler and tooling — including the fork's =:js-runtime= feature — and the compiled =localhost:9630= dashboard UI (the shadow-grove SPA, the build-report UI, CSS, and image assets under =shadow/cljs/ui/dist= and =shadow/cljs/build_report/dist=). The dashboard is served straight from the jar's classpath (=shadow.cljs.devtools.server= mounts =classpath-handler "/shadow/cljs/ui/dist"=), so =shadow-cljs server= / =watch= bring up the running dashboard exactly as upstream does.
 
-The compiled UI assets are not committed to git — they are gitignored, matching upstream — so they are produced by the build below and baked into the jar from the working tree at deploy time. A plain =lein install= from a clean checkout therefore yields a compiler-only jar; a full-drop-in release requires running the dashboard build (see [[*Building the dashboard UI]]) first.
+The compiled dashboard assets are committed to the repo (=src/ui-release/shadow/cljs/ui/dist/js/{main,code-editor}.js=, =ui/dist/css/ui.css=, and =build_report/dist/js/{main.js,manifest.edn}=), so a plain =lein install= from a clean checkout produces the full-drop-in jar — no UI rebuild or =shadow-grove= checkout required. Only the source maps (=*.js.map=) stay gitignored (debug-only, ~6.3MB, regenerated every build; the dashboard renders without them). These committed assets are a point-in-time snapshot of the dashboard build; rebuild and re-commit them (see [[*Building the dashboard UI]]) only when syncing to a new upstream version, which changes the dashboard source.
 
 * Deploy configuration
 
@@ -48,7 +48,7 @@ Note: with 1Password desktop-app integration, =op read= works (prompting via Tou
 * Releasing a new version
 
 1. Bump the version string in =project.clj= to the next =<upstream-version>-bun=.
-2. Build the dashboard UI into =src/ui-release= (see [[*Building the dashboard UI]]) so the jar is a full drop-in, not compiler-only.
+2. If this sync brought a new upstream version (the dashboard source changed), rebuild the dashboard UI into =src/ui-release= (see [[*Building the dashboard UI]]) and commit the refreshed assets. For a re-release of the same upstream base, the committed assets already make the jar a full drop-in — skip to validation.
 3. Validate the build locally first — this is reversible, the deploy is not. Confirm the jar carries the dashboard:
 
    #+begin_src sh
@@ -95,4 +95,14 @@ Producing the full-drop-in jar (one that ships the =localhost:9630= UI) reconstr
    lein with-profiles +cljs run -m shadow.cljs.devtools.cli release ui build-report
    #+end_src
 
-6. Revert the temporary =project.clj= edit from step 3, then continue the release (=lein install= / deploy). The dashboard can be smoke-tested before deploy by booting any consumer against the local install and hitting the UI: =clojure -M:<cljs-alias> -m shadow.cljs.devtools.cli server= then =curl -s localhost:9630/css/ui.css=.
+6. Revert the temporary =project.clj= edit from step 3, then commit the refreshed assets so the jar stays reproducible from a bare checkout. They are gitignored, so force-add the functional files only (not the =*.js.map= source maps):
+
+   #+begin_src sh
+   git add -f src/ui-release/shadow/cljs/ui/dist/js/main.js \
+              src/ui-release/shadow/cljs/ui/dist/js/code-editor.js \
+              src/ui-release/shadow/cljs/ui/dist/css/ui.css \
+              src/ui-release/shadow/cljs/build_report/dist/js/main.js \
+              src/ui-release/shadow/cljs/build_report/dist/js/manifest.edn
+   #+end_src
+
+   The dashboard can be smoke-tested before deploy by booting any consumer against the local install and hitting the UI: =clojure -M:<cljs-alias> -m shadow.cljs.devtools.cli server= then =curl -s localhost:9630/css/ui.css=.
