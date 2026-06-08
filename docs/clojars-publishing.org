@@ -45,9 +45,51 @@ Clojars no longer accepts the account password for deploys — a scoped deploy t
 
 Note: with 1Password desktop-app integration, =op read= works (prompting via Touch ID) even when =op whoami= reports "account is not signed in".
 
+* Syncing to a new upstream version
+
+Upstream =thheller/shadow-cljs= ships frequently; this fork periodically catches up and re-cuts. The =:js-runtime= feature is small and well-isolated, so the merge is usually cheap — historically a single conflict, in =project.clj=. (The 3.3.7 → 3.4.11 sync absorbed 49 upstream commits — including the =shadow/util= → =shadow/fswatch= rewrite and the =shadow-undertow= → =shadow-http= server swap — with =project.clj= as the only conflict.)
+
+1. Remotes. =origin= is the fork (=teehemkay/shadow-cljs=); =upstream= is =thheller/shadow-cljs=. Add upstream once if missing, then fetch:
+
+   #+begin_src sh
+   git remote get-url upstream || git remote add upstream https://github.com/thheller/shadow-cljs.git
+   git fetch upstream --tags
+   #+end_src
+
+2. Size the gap. The target version is upstream's latest =bump <x.y.z>= commit:
+
+   #+begin_src sh
+   git log upstream/master --oneline | grep -m1 'bump '   # latest upstream version
+   git rev-list --count master..upstream/master           # commits to absorb
+   #+end_src
+
+3. Branch and merge, so =master= stays clean until the merge is validated:
+
+   #+begin_src sh
+   git checkout -b sync/upstream-<x.y.z>
+   git merge upstream/master
+   #+end_src
+
+   Tip: =git merge --no-commit --no-ff upstream/master= previews the conflict surface without creating the commit — inspect =git status= / =git diff=, then either resolve or =git merge --abort= if the scope is bigger than expected.
+
+4. Resolve =project.clj= — the one expected conflict. The =:dependencies= block auto-merges to upstream's bumped versions; typically only the =defproject= line conflicts. Keep the fork's side for what the fork owns — the coordinate =org.clojars.teehemkay/shadow-cljs=, the =:url=, and the =:repositories= / =:deploy-repositories= blocks — and take upstream's side for everything else (dependency versions, profiles). Set the version to =<x.y.z>-bun=. Then confirm nothing else lingers anywhere: =git grep -nE '^(<<<<<<<|>>>>>>>)'=.
+
+5. Validate before committing. The fork's tests run alongside the full upstream suite:
+
+   #+begin_src sh
+   lein javac    # compiles upstream's Java (e.g. the fswatch sources)
+   lein test     # expect the js-runtime / cli-opts tests green among the rest
+   #+end_src
+
+6. Commit the merge, recording in the message what conflicted and how it was resolved — future syncs read it.
+
+7. Continue. A new upstream base means the dashboard source changed, so rebuild it (see [[*Building the dashboard UI]]), then publish (see [[*Releasing a new version]]). Verifying against the downstream consumers (=kiln=, =bunbushka=, =ik=) before publishing is cheap insurance: =lein install= the synced version locally, point each consumer's =deps.edn= at =<x.y.z>-bun=, and run its build/tests.
+
 * Releasing a new version
 
-1. Bump the version string in =project.clj= to the next =<upstream-version>-bun=.
+Picks up from a completed sync (branch merged, version-bumped, tests green) — or stands alone for a re-release of the same upstream base.
+
+1. Set the version string in =project.clj= to =<upstream-version>-bun= (already done during a fresh sync; for a same-base re-release, bump the =-bun= suffix instead — published versions are immutable).
 2. If this sync brought a new upstream version (the dashboard source changed), rebuild the dashboard UI into =src/ui-release= (see [[*Building the dashboard UI]]) and commit the refreshed assets. For a re-release of the same upstream base, the committed assets already make the jar a full drop-in — skip to validation.
 3. Validate the build locally first — this is reversible, the deploy is not. Confirm the jar carries the dashboard:
 
