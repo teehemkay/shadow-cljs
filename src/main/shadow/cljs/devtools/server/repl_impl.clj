@@ -138,13 +138,10 @@
                      :cljs/quit
 
                      :else
-                     (let [;; Every eval passes here whichever way the session
-                           ;; selected the build (shadow/repl, nrepl-select from
-                           ;; an editor, stdin), so a managed build's JS process
-                           ;; is started here rather than at selection, where
-                           ;; any path that skips the call evaluates against
-                           ;; nothing. It also restarts a process that died.
-                           launch
+                     (let [;; every REPL frontend's eval passes here, so a managed
+                           ;; build's process that is still starting is waited for
+                           ;; here, and one that cannot run is explained
+                           no-runtime-reason
                            (when-not (or (:runtime-id repl-state)
                                          (-> worker :state-ref deref :default-runtime-id))
                              (worker/await-managed-runtime worker worker/managed-runtime-connect-ms))
@@ -166,12 +163,8 @@
 
                        (if-not runtime-id
                          (do (repl-stderr repl-state
-                               (if (= :timeout launch)
-                                 (format "%s runtime for %s did not connect within %d ms"
-                                   (name (shared/js-runtime (-> worker :state-ref deref :build-config)))
-                                   (:build-id worker)
-                                   worker/managed-runtime-connect-ms)
-                                 "No available JS runtime.\nSee https://shadow-cljs.github.io/docs/UsersGuide.html#repl-troubleshooting"))
+                               (or no-runtime-reason
+                                   "No available JS runtime.\nSee https://shadow-cljs.github.io/docs/UsersGuide.html#repl-troubleshooting"))
                              (repl-result repl-state nil)
                              (repl-prompt repl-state)
                              (>!! read-lock 1)

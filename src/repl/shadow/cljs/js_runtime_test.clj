@@ -31,20 +31,8 @@
 (deftest test-managed-runtime-is-opt-in
   (is (false? (shared/managed-runtime? {:target :node-script})))
   (is (true? (shared/managed-runtime? {:target :node-script :js-runtime :bun})))
-  (is (true? (shared/managed-runtime? {:target :node-test :js-runtime :bun :ui-driven true})))
+  (is (true? (shared/managed-runtime? {:target :node-test :js-runtime :bun})))
   (is (false? (shared/managed-runtime? {:target :browser :js-runtime :bun}))))
-
-(deftest test-managed-runtime-needs-a-build-that-hosts-a-repl
-  ;; A managed runtime is a process the REPL evaluates in, so a build whose
-  ;; output carries no REPL client gets none: started, it would run its
-  ;; code and never connect. A :node-test build carries one only when
-  ;; :ui-driven (otherwise it runs the whole suite and exits), and no build
-  ;; does with devtools disabled.
-  (is (false? (shared/managed-runtime? {:target :node-test :js-runtime :bun})))
-  (is (false? (shared/managed-runtime? {:target :node-script :js-runtime :bun
-                                        :devtools {:enabled false}})))
-  (is (false? (shared/managed-runtime? {:target :node-test :js-runtime :bun :ui-driven true
-                                        :devtools {:enabled false}}))))
 
 (deftest test-bootstrap-source-keeps-runtime-alive
   (let [src (js-runtime/bootstrap-source

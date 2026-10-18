@@ -311,17 +311,9 @@
       (throw (ex-info (str "unknown :js-runtime " (pr-str (js-runtime build-config)))
                {:js-runtime (js-runtime build-config)})))))
 
-(defn managed-runtime?
-  "True when the worker should start a JS process for the REPL to evaluate
-  in. The build's output has to carry the REPL client (inject-node-repl),
-  or the process runs its code and never connects: :node-test injects it
-  only when :ui-driven, and a build with devtools disabled never does. A
-  plain :node-test build would run its whole suite and exit."
-  [{:keys [target ui-driven devtools] :as build-config}]
+(defn managed-runtime? [build-config]
   (and (node-family-target? build-config)
-       (explicit-js-runtime? build-config)
-       (not (false? (:enabled devtools)))
-       (or (not= :node-test target) (true? ui-driven))))
+       (explicit-js-runtime? build-config)))
 
 (defn warn-if-js-runtime-ignored
   "Prints a warning when :js-runtime is set on a non-node-family build config."

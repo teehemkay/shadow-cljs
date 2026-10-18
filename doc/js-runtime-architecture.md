@@ -36,7 +36,7 @@ bottom of `shared.clj`. These are the only functions that inspect the
 | `js-runtime-command` | Returns the bare executable name (`"node"` or `"bun"`) |
 | `js-runtime-stdin-argv` | Returns argv for piped stdin execution: `["node"]` or `["bun" "run" "-"]` |
 | `js-runtime-file-argv` | Returns argv for file execution: `["node" path]` or `["bun" "run" path]` |
-| `managed-runtime?` | True when the build is both a node-family target and has an explicit `:js-runtime` |
+| `managed-runtime?` | True when the build is both a node-family target and has an explicit `:js-runtime`; the config half of the worker's `managed-build?` |
 
 The spec `::js-runtime` is defined as `keyword?` in `shadow.build.config` and
 included as an optional key in the base `::build` spec (accepted by all
@@ -45,11 +45,14 @@ specs. On non-node-family targets, it is accepted but ignored with a warning.
 
 ### Bootstrap — `shadow.cljs.devtools.server.js-runtime`
 
-A small namespace with two functions that generate the CommonJS bootstrap script
-used by managed runtimes:
+A small namespace naming the files a managed runtime uses and generating its
+CommonJS bootstrap script:
 
 - `bootstrap-file` — returns a `File` in the cache directory, named
   `shadow-managed-runtime-<build-id>.cjs`.
+- `log-file` — returns `shadow-managed-runtime-<build-id>.log` beside it, where
+  the process's stdout and stderr go. A file rather than a pipe, so nothing has
+  to drain it and a chatty runtime never blocks.
 - `bootstrap-source` — returns a JS string that `require()`s the absolute path
   to the build output and keeps the process alive with an infinite `setInterval`.
 
@@ -59,48 +62,47 @@ which is fire-and-forget.
 
 ### Managed Runtime Lifecycle — `shadow.cljs.devtools.server.worker.impl`
 
-The worker stores managed runtime state under `:managed-runtime`:
+The worker loop owns the process. Its state lives under `:managed-runtime`:
 
 ```clojure
-{:managed-runtime {:process <java.lang.Process>
-                   :bootstrap-file <java.io.File>}}
+{:managed-runtime {:process    <java.lang.Process>
+                   :log-file   <java.io.File>
+                   :connected? true      ; set when a runtime connects while it is alive
+                   :restarts   0}}       ; renewed by each successful compile
+;; or, when the launch threw:
+{:managed-runtime {:error "<exception message>" :restarts 0}}
 ```
 
-Three functions manage the lifecycle:
-
-- **`start-managed-runtime`** — guards on `managed-runtime?` and
-  `managed-runtime-running?`, then generates the bootstrap file, spawns a
-  `ProcessBuilder` with `js-runtime-file-argv`, and stores the process reference.
-- **`managed-runtime-running?`** — checks `.isAlive` on the stored process.
+- **`managed-build?`** — asks the *compiled* build: `managed-runtime?` on its
+  merged config (where `--js-runtime` lands, through `:config-merge`), and
+  `shadow.cljs.devtools.client.node` among its sources. Reading the build rather
+  than restating each target's injection rules (`:ui-driven` for `:node-test`,
+  `:devtools :enabled`) keeps the two from drifting. It is the *presence* of
+  `:js-runtime` that opts in, not its value: `:js-runtime :node` gets a managed
+  `node` process the same way.
+- **`start-managed-runtime-after-build`** — called at the end of every
+  successful `build-compile`: renews the restart allowance and starts a process
+  when the build is managed and none is alive.
+- **`start-managed-runtime`** — writes the bootstrap, spawns the process with
+  `js-runtime-file-argv` and its output redirected to the log file, and posts
+  the process's exit back to the loop as `:managed-runtime-exited`. A launch
+  that throws leaves `:error` instead.
+- **`:managed-runtime-exited`** — restarts a process that had connected, once
+  per build; one that never connected stays down until the next build, so a
+  `:main` that exits is not re-run in a loop.
 - **`stop-managed-runtime`** — calls `.destroy` on the process and dissociates
   the state. Called from the worker's `:do-shutdown` closure in `worker.clj`.
 
-The worker exposes a `:ensure-managed-runtime` control message that delegates
-to `start-managed-runtime` and replies `:launched` via the message's reply
-channel.
+### The REPL side — `shadow.cljs.devtools.server.worker` and `repl-impl`
 
-### Public API — `shadow.cljs.devtools.api`
-
-`ensure-runtime` bridges the gap between the REPL entry point and the managed
-runtime:
-
-1. Check if a runtime is already connected → `:already-connected`
-2. Check if the build supports managed runtimes → `:not-managed`
-3. Send `:ensure-managed-runtime` to the worker
-4. Poll for a connected runtime with a configurable timeout (default 5 s)
-5. Return `:connected`, `:timeout`, or `:no-worker`
-
-Both code paths in `api/repl` (nREPL and stdin takeover) call
-`ensure-runtime` before entering CLJS mode. This means `(shadow/repl :build-id)`
-on a watched build with `:js-runtime :bun` will auto-launch Bun, wait for
-connection, and enter the CLJS REPL transparently.
-
-Note that managed runtime behavior is gated on the *presence* of `:js-runtime`
-in the build config, not on which runtime is selected. A watched build with no
-`:js-runtime` key (the traditional default) requires the user to manually start a
-JS process that connects to the relay. Adding `:js-runtime :node` opts into
-auto-launch and managed lifecycle just like `:js-runtime :bun` does — the only
-difference is which executable is spawned.
+Every REPL frontend evaluates through `repl-impl/do-repl` (nREPL, stdin, prepl,
+`api/cljs-eval`), and none of them starts the process. When an eval finds no
+runtime, `worker/await-managed-runtime` reads the worker's state — never sending
+the loop a message, so it cannot block on a busy, stopped or failed worker, and
+is safe on the worker's own thread — and waits up to 5 s while the process is
+alive but not yet connected. Otherwise it returns why there is none (the launch
+error, or the exit code with the end of the log), which `do-repl` prints in
+place of the generic "No available JS runtime".
 
 ### Standalone Node REPL — `shadow.cljs.devtools.server.repl-impl`
 
@@ -138,11 +140,11 @@ shadow-cljs.edn (:js-runtime :bun)
          Test Autorun        Watched + REPL      Standalone REPL
                 │                   │                   │
                 ▼                   ▼                   ▼
-       js-runtime-file-argv  ensure-runtime      js-runtime-stdin-argv
+       js-runtime-file-argv  compile succeeds    js-runtime-stdin-argv
                 │                   │                   │
                 ▼                   ▼                   ▼
        ProcessBuilder         start-managed-     ProcessBuilder
-       ["bun" "run"           runtime                ["bun" "run" "-"]
+       ["bun" "run"           runtime-after-build    ["bun" "run" "-"]
         "out/test.js"]              │                   │
                                     ▼                   ▼
                               bootstrap-source    Script piped to stdin
@@ -188,7 +190,7 @@ Each launch path has clear ownership:
 | Path | Owner | Crash behavior | Shutdown |
 |---|---|---|---|
 | Standalone REPL | REPL thread in `repl-impl` | Auto-restart | Thread exit |
-| Watched build | Worker impl | Not restarted | Worker `:do-shutdown` |
+| Watched build | Worker impl | Restarted once per build if it had connected | Worker `:do-shutdown` |
 | Test autorun | Synchronous in flush stage | N/A (waits for exit) | Process exits naturally |
 
 ## Scope and Limitations

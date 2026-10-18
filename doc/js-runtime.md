@@ -40,16 +40,28 @@ With `:autorun true` on a `:node-test` build, tests run under `bun run <file>` i
 
 ### Watched builds and REPL
 
-When a watched build has `:js-runtime :bun`, calling `(shadow/repl :build-id)` will:
-
-1. Auto-launch a managed Bun process if no runtime is connected
-2. Wait for the runtime to connect (up to 5 seconds)
-3. Enter CLJS mode
+A watched build with `:js-runtime` gets a managed process: shadow-cljs starts
+it when a compile succeeds, and every REPL evaluates in it however it selected
+the build — `(shadow/repl :id)`, an editor's `nrepl-select` (CIDER, Calva,
+Cursive), the console REPL or `shadow/cljs-eval`.
 
 ```clojure
-(shadow/watch :test)
-(shadow/repl :test)    ;; launches Bun, connects, enters CLJS
+(shadow/watch :my-script)   ;; compiles, then starts Bun
+(shadow/repl :my-script)    ;; evaluates in it
 ```
+
+- **Only builds that carry the REPL client get one.** A `:node-script` does
+  unless `:devtools {:enabled false}`. A `:node-test` does only with
+  `:ui-driven true`; otherwise it runs its tests and exits, so no process is
+  started for it.
+- **The process's output goes to a log file**,
+  `.shadow-cljs/shadow-managed-runtime-<build-id>.log`.
+- **An evaluation never starts it.** One that finds no runtime waits up to
+  5 seconds for a process that is still starting, and otherwise says why there
+  is none: the launch error, or the exit code with the end of the log.
+- **A process that exits after connecting is restarted once per build**; one
+  that exits before connecting waits for the next successful compile, so a
+  `:main` that exits is not re-run in a loop.
 
 The managed process is stopped automatically when the worker shuts down.
 

@@ -1,15 +1,11 @@
 (ns shadow.cljs.bun-runtime-test
   (:require
     [clojure.java.io :as io]
-    [clojure.java.shell :refer [sh]]
     [clojure.test :refer [deftest is testing]]
+    [shadow.cljs.test-util :refer [bun-available?]]
     [shadow.build.log :as build-log]
     [shadow.build.targets.node-test :as node-test]))
 
-(defn bun-available? []
-  (try
-    (zero? (:exit (sh "bun" "--version")))
-    (catch Exception _ false)))
 
 (def ^:private noop-logger
   (reify build-log/BuildLog (log* [_ _ _])))

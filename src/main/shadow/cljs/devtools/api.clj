@@ -435,23 +435,11 @@
         (recur worker)
         ))))
 
-(defn ensure-runtime
-  ([build-id]
-   (ensure-runtime build-id {}))
-  ([build-id {:keys [timeout-ms] :or {timeout-ms worker/managed-runtime-connect-ms}}]
-   (if-let [worker (get-worker build-id)]
-     (if (seq (repl-runtimes build-id))
-       :already-connected
-       (worker/await-managed-runtime worker timeout-ms))
-     :no-worker)))
-
 (defn repl
   ([build-id]
    (repl build-id {}))
   ([build-id {:keys [stop-on-eof] :as opts}]
    (if *nrepl-init*
-     ;; No ensure-runtime here: the REPL starts a managed runtime on the
-     ;; first eval, which every selection path reaches (repl-impl/do-repl).
      (nrepl-select build-id opts)
      (let [{:keys [supervisor] :as app}
            (runtime/get-instance!)
@@ -460,10 +448,9 @@
            (super/get-worker supervisor build-id)]
        (if-not worker
          :no-worker
-         (do
-           (repl-impl/stdin-takeover! worker app opts)
-           (when stop-on-eof
-             (super/stop-worker supervisor build-id))))))))
+         (do (repl-impl/stdin-takeover! worker app opts)
+             (when stop-on-eof
+               (super/stop-worker supervisor build-id))))))))
 
 ;; FIXME: should maybe allow multiple instances
 (defn node-repl
