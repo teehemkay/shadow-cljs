@@ -22,7 +22,8 @@
     [shadow.cljs.devtools.server.util :as util]
     [shadow.cljs.devtools.server.worker.impl :as impl]
     [shadow.cljs.test-util :refer [bun-available?]]
-    [shadow.jvm-log :as log])
+    [shadow.jvm-log :as log]
+    [shadow.remote.relay.api :as relay-api])
   (:import
     [java.util.logging Filter Level LogRecord]))
 
@@ -379,6 +380,45 @@
           (is (poll 5000 #(seq @failures)) "the failure report names the blocked output")
           (is (identical? old (:process (managed-state build-id))))
           (is (.isAlive ^Process old)))))))
+
+(defn- on-worker-departure
+  "Connects a client to shadow's relay that calls F when BUILD-ID's worker
+  leaves the relay. Returns a function that disconnects it. Subscribes
+  through :request-clients, whose reply confirms the subscription before
+  this returns."
+  [build-id f]
+  (let [to-relay (async/chan 10)
+        from-relay (async/chan 100)]
+    (relay-api/connect (:relay (runtime/get-instance!)) to-relay from-relay {})
+    (async/<!! from-relay) ;; :welcome
+    (async/>!! to-relay {:op :hello :client-info {:type :managed-runtime-test}})
+    (async/>!! to-relay {:op :request-clients :notify true :notify-op ::worker-notify
+                         :query [:eq :shadow.cljs/worker-for build-id]})
+    (async/<!! from-relay) ;; :clients
+    (async/go-loop []
+      (when-some [{:keys [event-op]} (async/<! from-relay)]
+        (when (= :client-disconnect event-op)
+          (f))
+        (recur)))
+    #(async/close! to-relay)))
+
+(deftest the-worker-leaves-the-relay-before-its-runtime-stops
+  ;; The relay tells a build's runtimes when their worker leaves. A runtime
+  ;; stopped first gets that notice on a closing websocket, which shadow-http
+  ;; reports as an uncaught exception. The kill follows the relay's notices
+  ;; and a process takes milliseconds to exit, so the process is still alive
+  ;; when this observer, notified alongside the runtime, looks.
+  (with-watched-build (script-config :managed-probe-worker-stop)
+    (fn [{:keys [build-id]}]
+      (is (some? (await-runtime build-id 10000)))
+      (let [^Process process (:process (managed-state build-id))
+            alive-at-departure (promise)
+            disconnect (on-worker-departure build-id #(deliver alive-at-departure (.isAlive process)))]
+        (try
+          (api/stop-worker build-id)
+          (is (true? (deref alive-at-departure 5000 ::not-notified)))
+          (finally
+            (disconnect)))))))
 
 (deftest the-log-is-rotated-past-its-limit
   (let [build-id :managed-probe-rotate

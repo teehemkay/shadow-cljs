@@ -334,6 +334,16 @@
              (>!! output {:type :worker-shutdown :proc-id proc-id})
              (when reload-npm
                (reload-npm/stop reload-npm))
+             ;; leave the relay before stopping the managed runtime: the
+             ;; relay tells the build's runtimes this worker is gone, and a
+             ;; runtime stopped first gets that notice on a closing websocket,
+             ;; which shadow-http reports as an uncaught exception.
+             ;; connection-stop closes once the relay has queued the notice;
+             ;; the timeout only bounds a relay that never answers.
+             (async/close! to-relay)
+             (alt!!
+               connection-stop nil
+               (async/timeout 1000) nil)
              (impl/stop-managed-runtime state))})
 
         {:keys [watch-dir watch-exts]
