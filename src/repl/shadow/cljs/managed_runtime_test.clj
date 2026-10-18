@@ -206,6 +206,18 @@
       (is (= ["true"]
              (:results (api/cljs-eval build-id "(some? js/process.versions.bun)" {})))))))
 
+(deftest the-console-repl-evaluates-in-the-managed-runtime
+  ;; api/repl outside nREPL takes over stdin (repl-impl/stdin-takeover!), the
+  ;; path of `shadow-cljs cljs-repl`; it returns at the end of input.
+  (with-watched-build (script-config :managed-probe-console)
+    (fn [{:keys [build-id]}]
+      ;; the form's output, then its result
+      (is (= "true\nnil\n"
+             (with-out-str
+               (binding [*in* (clojure.lang.LineNumberingPushbackReader.
+                                (java.io.StringReader. (str bun-check "\n")))]
+                 (api/repl build-id {:prompt false}))))))))
+
 (deftest a-js-runtime-given-on-the-command-line-is-managed
   ;; --js-runtime reaches the build through :config-merge, so the raw build
   ;; config never carries it.
