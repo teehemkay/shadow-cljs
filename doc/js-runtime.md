@@ -53,26 +53,22 @@ Cursive), the console REPL or `shadow/cljs-eval`.
 - **Only builds that carry the REPL client get one.** A `:node-script` does
   unless `:devtools {:enabled false}`. A `:node-test` does only with
   `:ui-driven true`; otherwise it runs its tests and exits, so no process is
-  started for it.
+  started for it. `node-repl` gets none: it pipes in its own process.
+- **One rule keeps it going: after each successful compile, a managed build
+  with no live process gets one.** A process that exits — a crash, a `:main`
+  that calls `process.exit` — is started again by the next compile (save a
+  file), not by itself. A build that stops being managed loses its process.
+  A config edit, or a process that hangs after connecting, needs the watch
+  restarted.
 - **The process's output goes to a log file**,
   `.shadow-cljs/shadow-managed-runtime-<build-id>.log`. Each run appends after
-  a `--- bun runtime started ---` line, so a restart keeps the output of the
-  crash that caused it; past 1 MB the log is set aside as `<log>.1`.
-- **An evaluation never starts it.** One that finds no runtime waits while one
-  may still come: before the build's first compile, within 5 seconds of a new
-  process's start, while a connected process reconnects, or while a restart is
-  due. Otherwise it says at once why there is none: the launch error, or the
-  exit code with the end of that run's output. Because a new process's window
-  counts from its start, a region of forms pays it once.
-- **A process that exits after connecting is restarted once per build**; one
-  that exits before connecting waits for the next successful compile, so a
-  `:main` that exits is not re-run in a loop.
-- **A compile replaces a stale process**: one started from a different build
-  config, or one that never connected within its window. Without autobuild,
-  shadow-cljs keeps compiling from the old config after an edit, so the process
-  that matches it keeps running. A replaced process gets SIGTERM, then a forced
-  kill after 2 seconds.
-- **`node-repl` gets none**: it pipes in its own process.
+  a `--- bun runtime started ---` line, so an earlier run's crash stays
+  readable; past 1 MB the log is set aside as `<log>.1`.
+- **An evaluation never starts it.** One that finds no runtime waits only for
+  a new process to connect, at most 5 seconds from that process's start, so a
+  region of forms pays the wait once. Otherwise it says at once why there is
+  none: the launch error, that the process exited (with its code), or that it
+  is running but not connected — each with the end of that run's output.
 
 The managed process is stopped automatically when the worker shuts down.
 

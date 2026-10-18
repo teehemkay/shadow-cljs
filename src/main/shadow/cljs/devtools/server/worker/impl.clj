@@ -424,12 +424,15 @@
 
 ;; managed runtime lifecycle
 ;;
-;; The worker owns the JS process a managed build's REPL evaluates in. It
-;; starts one when a compile succeeds and none is alive, and restarts it once
-;; per build if it exits after connecting. Evals never start it: they read
-;; this state (worker/await-managed-runtime), so a launch that fails or a
-;; process that dies is answered at once instead of blocking the eval on a
-;; reply from this loop.
+;; The worker owns the JS process a managed build's REPL evaluates in, and
+;; keeps one rule: after a successful compile, a managed build with no live
+;; process gets one, and a build that is no longer managed loses its. Nothing
+;; else restarts or replaces it: a process that exits waits for the next
+;; compile, and a config edit or a process wedged after connecting needs the
+;; watch restarted, as a runtime started by hand does. Restart and
+;; replacement policies were built and removed: each raced the compile loop
+;; and the others. Evals never start it; they only read this state
+;; (worker/await-managed-runtime), so they cannot block on this loop.
 
 (defn managed-build?
   "True when the compiled build should get a managed JS process: a
@@ -449,20 +452,15 @@
          (contains? last-build-provides 'shadow.cljs.devtools.client.node))))
 
 (def managed-runtime-connect-ms
-  "How long a new managed process has to connect before the REPL reports it
-  and the next compile replaces it. A cold bun start loading a dev build
-  takes about a second."
+  "How long a new managed process has to connect, counted from its start,
+  before the REPL reports it. A cold bun start loading a dev build takes
+  about a second."
   5000)
 
-(defn stop-managed-runtime
-  "Stops the process, forcibly when it outlives a grace period (a :main may
-  trap SIGTERM), so a replaced process cannot keep serving the REPL."
-  [{:keys [managed-runtime] :as worker-state}]
+(defn stop-managed-runtime [{:keys [managed-runtime] :as worker-state}]
   ;; a failed launch leaves :error and no :process
   (when-let [^Process process (:process managed-runtime)]
-    (.destroy process)
-    (when-not (.waitFor process 2 java.util.concurrent.TimeUnit/SECONDS)
-      (.destroyForcibly process)))
+    (.destroy process))
   (dissoc worker-state :managed-runtime))
 
 (defn managed-runtime-running? [{:keys [managed-runtime]}]
@@ -471,7 +469,7 @@
 
 (def ^:private managed-runtime-log-limit
   "A log past this size is set aside as <log>.1 before the next start, so
-  it cannot grow without bound across restarts."
+  it cannot grow without bound across runs."
   (* 1024 1024))
 
 (def managed-runtime-run-marker-suffix
@@ -480,9 +478,8 @@
   " runtime started ---\n")
 
 (defn- open-managed-runtime-log
-  "The log a starting process appends to: a run marker after any earlier
-  run's output, which a restart keeps, so the crash that caused it stays
-  readable."
+  "The log a starting process appends to, after a run marker, so an earlier
+  run's crash stays readable."
   [^File log-file js-runtime-name]
   (io/make-parents log-file)
   (when (> (.length log-file) managed-runtime-log-limit)
@@ -492,20 +489,17 @@
         (into-array java.nio.file.CopyOption [java.nio.file.StandardCopyOption/REPLACE_EXISTING]))
       (catch Exception e
         ;; keep appending rather than fail the start
-        (log/debug-ex e ::managed-runtime-log-rotate-failed {:log-file log-file}))))
+        (log/warn-ex e ::managed-runtime-log-rotate-failed {:log-file log-file}))))
   (spit log-file (str "--- " js-runtime-name managed-runtime-run-marker-suffix) :append true)
   log-file)
 
 (defn start-managed-runtime
-  "Starts the build's JS process, its output going to the runtime's log
-  file. A process that cannot be launched leaves :error in its place. The
-  process's exit is posted back to this loop as :managed-runtime-exited.
-  Keeps :restarts."
-  [{:keys [build-state cache-root channels managed-runtime] :as worker-state}]
+  "Starts the build's JS process, its output appended to the runtime's log
+  file. A process that cannot be launched leaves :error in its place."
+  [{:keys [build-state cache-root] :as worker-state}]
   (let [{:keys [build-id output-to] :as config} (::build/config build-state)
         ^File bootstrap-file (js-runtime/bootstrap-file cache-root build-id)
-        ^File log-file (js-runtime/log-file cache-root build-id)
-        restarts (:restarts managed-runtime 0)]
+        ^File log-file (js-runtime/log-file cache-root build-id)]
     (try
       (io/make-parents bootstrap-file)
       (spit bootstrap-file (js-runtime/bootstrap-source {:output-to output-to}))
@@ -519,18 +513,7 @@
                 (.redirectOutput
                   (java.lang.ProcessBuilder$Redirect/appendTo
                     (open-managed-runtime-log log-file (name (target-shared/js-runtime config)))))
-                (.start))
-
-            proc-control
-            (:proc-control channels)]
-
-        ;; put!, never >!!: the callback may run on this worker thread or on a
-        ;; shared pool thread, and must not block either on a full channel.
-        ;; After the worker stopped proc-control is closed and this is dropped.
-        (.thenAccept (.onExit process)
-          (reify java.util.function.Consumer
-            (accept [_ exited]
-              (async/put! proc-control {:type :managed-runtime-exited :process exited}))))
+                (.start))]
 
         (log/debug ::managed-runtime-started
           {:build-id build-id
@@ -540,55 +523,29 @@
           :managed-runtime
           {:process process
            :log-file log-file
-           ;; what the next compile compares to replace a stale process
-           :config config
            ;; System/nanoTime, so a clock step cannot stretch the connect window
-           :started-at (System/nanoTime)
-           :restarts restarts}))
+           :started-at (System/nanoTime)}))
       (catch Exception e
         (log/debug-ex e ::managed-runtime-launch-failed {:build-id build-id})
         (assoc worker-state
           :managed-runtime
           ;; (str e), not .getMessage, which may be nil
-          {:error (str e)
-           :restarts restarts})))))
-
-(defn- stale-managed-runtime?
-  "A live process the compile should replace: started from another config
-  (a config edit, with or without autobuild), or past its connect window
-  without ever connecting (a blocked event loop, a client that gave up)."
-  [{:keys [managed-runtime build-state] :as worker-state}]
-  (let [{:keys [config connected? started-at]} managed-runtime]
-    (and (managed-runtime-running? worker-state)
-         (or (not= config (::build/config build-state))
-             (and (not connected?)
-                  (> (- (System/nanoTime) started-at)
-                     (* managed-runtime-connect-ms 1000000)))))))
+          {:error (str e)})))))
 
 (defn start-managed-runtime-after-build
-  "After a successful compile: a managed build without a live process, or
-  with a stale one, gets a new one. Each build also renews the one restart
-  a connected process gets."
+  "After a successful compile: a managed build without a live process gets
+  one, and a build that is no longer managed loses its process or the
+  report of its last one."
   [worker-state]
-  (let [worker-state (cond-> worker-state
-                       (stale-managed-runtime? worker-state)
-                       (stop-managed-runtime)
+  (cond
+    (not (managed-build? worker-state))
+    (stop-managed-runtime worker-state)
 
-                       (:managed-runtime worker-state)
-                       (assoc-in [:managed-runtime :restarts] 0))]
-    (cond-> worker-state
-      (and (managed-build? worker-state)
-           (not (managed-runtime-running? worker-state)))
-      (start-managed-runtime))))
-
-(defn mark-managed-runtime-connected
-  "Notes that the managed process connected, which is what earns it a
-  restart when it exits. Any runtime connecting while the process is alive
-  counts: the relay does not say which process a runtime is."
-  [worker-state]
-  (cond-> worker-state
     (managed-runtime-running? worker-state)
-    (assoc-in [:managed-runtime :connected?] true)))
+    worker-state
+
+    :else
+    (start-managed-runtime worker-state)))
 
 (defmulti do-proc-control
   (fn [worker-state {:keys [type] :as msg}]
@@ -598,25 +555,6 @@
   [worker-state {:keys [chan] :as msg}]
   (async/close! chan)
   worker-state)
-
-(defmethod do-proc-control :managed-runtime-exited
-  [{:keys [managed-runtime] :as worker-state} {:keys [process]}]
-  (cond
-    ;; a process this worker already replaced or stopped
-    (not (identical? process (:process managed-runtime)))
-    worker-state
-
-    ;; a process that never connected is left down until the next build, so
-    ;; a :main that exits is not re-run in a loop
-    (and (:connected? managed-runtime)
-         (zero? (:restarts managed-runtime 0))
-         (managed-build? worker-state))
-    (-> worker-state
-        (update-in [:managed-runtime :restarts] (fnil inc 0))
-        (start-managed-runtime))
-
-    :else
-    worker-state))
 
 (defn maybe-pick-different-default-runtime [{:keys [runtimes default-runtime-id] :as worker-state} runtime-id]
   (cond
@@ -995,8 +933,7 @@
                  (= :latest (get-in worker-state [:system-config :repl :runtime-select]))
                  (= :latest (get-in worker-state [:system-config :user-config :repl :runtime-select]))))
         (assoc :default-runtime-id client-id))
-      (update :runtimes assoc client-id (assoc client-info :client-id client-id))
-      (mark-managed-runtime-connected)))
+      (update :runtimes assoc client-id (assoc client-info :client-id client-id))))
 
 (defmethod do-relay-msg ::cljs-runtime-notify
   [worker-state {:keys [event-op client-id] :as msg}]

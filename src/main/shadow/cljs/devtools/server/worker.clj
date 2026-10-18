@@ -89,72 +89,46 @@
       (str "; its output ends:\n" text "\nFull output: " (.getPath log-file) "\n"))))
 
 (defn await-managed-runtime
-  "For an eval that found no runtime: waits while one may still come, then
-  says why there is none. Returns nil when one connected or the build has
-  no managed process (the REPL's generic message applies), else the message.
-
-  It waits while:
-  - the build has not finished its first compile, until it can say;
-  - a new process is within its connect window, counted from its start, so
-    a region of forms against one that cannot connect pays it once;
-  - a process that had connected is alive, which means it is reconnecting;
-  - a process that had connected exited and the worker will restart it.
-  The last three are bounded by timeout-ms per eval as well.
+  "For an eval that found no runtime: when the build's managed process is
+  new (within timeout-ms of its start, so a region of forms against one
+  that cannot connect pays the wait once) waits for it to connect, then says
+  why there is no runtime. Returns nil when one connected or the build has
+  no managed process (the REPL's generic message applies), else the
+  message.
 
   Reads only the worker's state and never asks its loop for anything, so it
   cannot block on a worker that is busy, stopped or failed to launch, and is
   safe on the worker's own thread (a build hook calling cljs-eval), where it
-  waits out the timeout at worst. The worker starts the process
+  waits out the window at worst. The worker starts the process
   (impl/start-managed-runtime-after-build); an eval never does."
   ([worker]
    (await-managed-runtime worker impl/managed-runtime-connect-ms))
   ([{:keys [state-ref build-id] :as worker} timeout-ms]
    {:pre [(impl/proc? worker)]}
-   (let [timeout-ns (* timeout-ms 1000000)
-         eval-deadline (+ (System/nanoTime) timeout-ns)]
+   (let [window-ns (.toNanos java.util.concurrent.TimeUnit/MILLISECONDS timeout-ms)]
      (loop []
-       (let [{:keys [default-runtime-id managed-runtime build-state build-config last-build-provides] :as state} @state-ref
-             {:keys [^Process process error connected? restarts started-at log-file]} managed-runtime
-             now (System/nanoTime)
-             in-time? (< now eval-deadline)
-             runtime (name (target-shared/js-runtime (or (:shadow.build/config build-state) build-config)))
-             alive? (boolean (and process (.isAlive process)))]
+       (let [{:keys [default-runtime-id managed-runtime build-state build-config]} @state-ref
+             {:keys [^Process process error started-at log-file]} managed-runtime
+             runtime (name (target-shared/js-runtime (or (:shadow.build/config build-state) build-config)))]
          (cond
-           default-runtime-id
+           (or default-runtime-id (nil? managed-runtime))
            nil
-
-           (nil? managed-runtime)
-           (if (and in-time?
-                    (nil? last-build-provides)
-                    (not (contains? state :failure-data)))
-             (do (Thread/sleep 50) (recur))
-             nil)
 
            error
            (format "%s runtime for %s could not be launched: %s\n" runtime build-id error)
 
-           (and alive? (not connected?) in-time? (< now (+ started-at timeout-ns)))
-           (do (Thread/sleep 50) (recur))
+           (not (.isAlive process))
+           (format "%s runtime for %s exited with code %d%s"
+             runtime build-id (.exitValue process) (log-tail log-file))
 
-           (and alive? (not connected?))
-           (format "%s runtime for %s did not connect within %d ms%s"
-             runtime build-id timeout-ms (log-tail log-file))
-
-           (and alive? in-time?)
-           (do (Thread/sleep 50) (recur))
-
-           alive?
-           (format "%s runtime for %s lost its connection and did not reconnect within %d ms%s"
-             runtime build-id timeout-ms (log-tail log-file))
-
-           (and connected? (zero? (or restarts 0)) (impl/managed-build? state) in-time?)
-           (do (Thread/sleep 50) (recur))
+           ;; nanoTime values compare by difference only
+           (< (- (System/nanoTime) started-at) window-ns)
+           (do (Thread/sleep 50)
+               (recur))
 
            :else
-           (format "%s runtime for %s exited with code %d%s%s"
-             runtime build-id (.exitValue process)
-             (if connected? "" " before connecting")
-             (log-tail log-file))))))))
+           (format "%s runtime for %s is running but not connected (it gets %d ms to connect after it starts)%s"
+             runtime build-id timeout-ms (log-tail log-file))))))))
 
 (defn worker-request [{:keys [proc-stop proc-control state-ref] :as worker} request]
   {:pre [(impl/proc? worker)

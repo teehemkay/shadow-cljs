@@ -1,10 +1,11 @@
 (ns shadow.cljs.managed-runtime-test
   "A watched build with :js-runtime whose output carries the REPL client
-  gets its JS process from the worker: started when a compile succeeds,
-  restarted once if it exits after connecting. Evals never start it; they
-  wait briefly for one that is starting and otherwise say why there is none.
-  Editors are driven as a real nREPL client against shadow's own nREPL
-  server, the way CIDER's nrepl-select connects.
+  gets its JS process from the worker: started after a successful compile
+  when none is alive, and stopped when the build is no longer managed.
+  Evals never start it; they wait briefly for a new one to connect and
+  otherwise say why there is none. Editors are driven as a real nREPL
+  client against shadow's own nREPL server, the way CIDER's nrepl-select
+  connects.
 
   Needs a running shadow-cljs server (its nREPL port is read from
   .shadow-cljs/nrepl.port) and bun on PATH; without bun it passes vacuously."
@@ -16,9 +17,9 @@
     [nrepl.core :as nrepl]
     [shadow.build.targets.shared :as shared]
     [shadow.cljs.devtools.api :as api]
+    [shadow.cljs.devtools.server.js-runtime :as js-runtime]
     [shadow.cljs.devtools.server.repl-impl :as repl-impl]
     [shadow.cljs.devtools.server.runtime :as runtime]
-    [shadow.cljs.devtools.server.worker :as worker]
     [shadow.cljs.devtools.server.worker.impl :as impl]
     [shadow.cljs.test-util :refer [bun-available?]]))
 
@@ -27,7 +28,7 @@
 
 (defn- script-config
   "A :node-script build whose output carries the REPL client and stays
-  alive; MAIN defaults to a main that does nothing."
+  alive; MAIN defaults to a main that prints one line."
   [build-id & {:keys [main] :or {main 'shadow.cljs.managed-runtime-probe/main}}]
   {:build-id build-id
    :target :node-script
@@ -64,6 +65,37 @@
           (> (System/currentTimeMillis) deadline) nil
           :else (do (Thread/sleep 50) (recur)))))))
 
+(defn- poll
+  "The first truthy value of F within TIMEOUT-MS, or nil."
+  [timeout-ms f]
+  (let [deadline (+ (System/currentTimeMillis) timeout-ms)]
+    (loop []
+      (or (f)
+          (when (< (System/currentTimeMillis) deadline)
+            (Thread/sleep 50)
+            (recur))))))
+
+(defn- worker-state [build-id]
+  (-> (api/get-worker build-id) :state-ref deref))
+
+(defn- managed-state [build-id]
+  (:managed-runtime (worker-state build-id)))
+
+(defn- log-file [build-id]
+  (js-runtime/log-file (get-in (runtime/get-instance!) [:config :cache-root]) build-id))
+
+(defn- log-text [build-id]
+  (let [f (log-file build-id)]
+    (if (.exists f) (slurp f) "")))
+
+(defn- occurrences [s sub]
+  (count (re-seq (re-pattern (java.util.regex.Pattern/quote sub)) s)))
+
+(defn- send-config!
+  "Hand the worker a changed build config, as its config watch does."
+  [build-id config]
+  (async/>!! (-> (worker-state build-id) :channels :config-watch) {:config config}))
+
 (defn- with-watched-build
   "Watch CONFIG, compiled once, call F with it, and stop the worker, which
   also stops its JS process. CLI-OPTS go to api/watch. Without bun, F does
@@ -79,18 +111,10 @@
            (finally
              (api/stop-worker build-id)))))))
 
-(defn- managed-state [build-id]
-  (-> (api/get-worker build-id) :state-ref deref :managed-runtime))
-
-(defn- log-text [build-id]
-  (let [f (io/file ".shadow-cljs" (str "shadow-managed-runtime-" (name build-id) ".log"))]
-    (if (.exists f) (slurp f) "")))
-
-(defn- occurrences [s sub]
-  (count (re-seq (re-pattern (java.util.regex.Pattern/quote sub)) s)))
-
 (def ^:private no-runtime-message
   "No available JS runtime.\nSee https://shadow-cljs.github.io/docs/UsersGuide.html#repl-troubleshooting")
+
+(def ^:private bun-check "(println (some? js/process.versions.bun))")
 
 (deftest the-runtime-starts-when-the-build-completes
   (with-watched-build (script-config :managed-probe-starts)
@@ -101,8 +125,7 @@
 (deftest an-editor-session-evaluates-in-the-managed-runtime
   (with-watched-build (script-config :managed-probe-editor)
     (fn [{:keys [build-id]}]
-      (is (= {:out "true\n"}
-             (eval-after-select build-id "(println (some? js/process.versions.bun))"))))))
+      (is (= {:out "true\n"} (eval-after-select build-id bun-check))))))
 
 (deftest cljs-eval-evaluates-in-the-managed-runtime
   ;; api/cljs-eval drives the same REPL loop without nREPL or stdin.
@@ -117,8 +140,7 @@
   (with-watched-build (dissoc (script-config :managed-probe-cli) :js-runtime)
     {:config-merge [{:js-runtime :bun}]}
     (fn [{:keys [build-id]}]
-      (is (= {:out "true\n"}
-             (eval-after-select build-id "(println (some? js/process.versions.bun))"))))))
+      (is (= {:out "true\n"} (eval-after-select build-id bun-check))))))
 
 (deftest a-build-without-the-repl-client-starts-no-runtime
   ;; A :node-test build that is not :ui-driven runs its whole suite and
@@ -137,8 +159,7 @@
           (let [[result ms] (timed #(eval-after-select build-id "(println :unreachable)"))]
             (is (= {:err no-runtime-message} result))
             (is (< ms 2000) "answered without waiting for a runtime"))
-          (is (nil? (-> (api/get-worker build-id) :state-ref deref :managed-runtime))
-              "no JS process was started"))))))
+          (is (nil? (managed-state build-id)) "no JS process was started"))))))
 
 (deftest a-runtime-that-exits-before-connecting-is-reported-at-once
   (with-watched-build (script-config :managed-probe-exits
@@ -148,11 +169,11 @@
         (testing (str "eval " (inc i))
           (let [[{:keys [out err]} ms] (timed #(eval-after-select build-id "(println :unreachable)"))]
             (is (nil? out))
-            (is (str/includes? (str err) "bun runtime for :managed-probe-exits exited with code 3 before connecting"))
+            (is (str/includes? (str err) "bun runtime for :managed-probe-exits exited with code 3"))
             (is (= 1 (occurrences (str err) "managed-runtime-exit-probe exits while loading"))
                 "the process's own output names the cause, from this run only")
             (is (str/ends-with? (str err) "\n"))
-            (is (< ms 7000) "bounded by one connect wait, not one per form")))))))
+            (is (< ms 7000))))))))
 
 (deftest a-runtime-that-cannot-be-launched-is-reported
   (with-redefs [shared/js-runtime-file-argv (fn [_] ["/nonexistent/managed-probe-js-runtime"])]
@@ -162,17 +183,6 @@
           (is (nil? out))
           (is (str/includes? (str err) "bun runtime for :managed-probe-no-launch could not be launched"))
           (is (< ms 2000) "a failed launch never blocks the eval"))))))
-
-(deftest a-runtime-that-exits-after-connecting-is-restarted
-  (with-watched-build (script-config :managed-probe-restart)
-    (fn [{:keys [build-id]}]
-      (let [first-id (await-runtime build-id 10000)]
-        (is (some? first-id))
-        (api/cljs-eval build-id "(js/setTimeout #(js/process.exit 0) 100)" {})
-        (is (some? (await-runtime build-id 10000 :except first-id))
-            "a fresh process connected after the first exited")
-        (is (= {:out "true\n"}
-               (eval-after-select build-id "(println (some? js/process.versions.bun))")))))))
 
 (deftest a-failed-launch-is-retried-by-the-next-build
   ;; The failed launch leaves no process; neither the next compile nor
@@ -188,7 +198,7 @@
           (is (str/includes? (str err) "bun runtime for :managed-probe-relaunch could not be launched: java.lang.Exception")
               "an exception without a message still explains the failure"))
         (api/watch-compile! build-id)
-        (is (nil? (-> (api/get-worker build-id) :state-ref deref :failure-data))
+        (is (not (contains? (worker-state build-id) :failure-data))
             "the next compile is not reported as failed")
         (is (some? (await-runtime build-id 10000)) "and it starts the runtime")
         (finally
@@ -211,39 +221,57 @@
         (finally
           (api/stop-worker build-id))))))
 
-(deftest a-config-change-replaces-the-process
-  ;; The autobuild recompile replaces a process started from the old config.
-  ;; The probe ignores SIGTERM, so only a forced kill gets rid of it.
-  (with-watched-build (script-config :managed-probe-config-change
-                        :main 'shadow.cljs.managed-runtime-sigterm-probe/main)
+(deftest a-process-that-never-connects-costs-one-wait
+  ;; The wait is anchored to the process's start, so a region of forms
+  ;; against a process that cannot connect does not pay it once per form.
+  (with-watched-build (script-config :managed-probe-busy
+                        :main 'shadow.cljs.managed-runtime-busy-probe/main)
+    (fn [{:keys [build-id]}]
+      (let [[{first-err :err} first-ms] (timed #(eval-after-select build-id "(println :unreachable)"))
+            [{second-err :err} second-ms] (timed #(eval-after-select build-id "(println :unreachable)"))]
+        (is (str/includes? (str first-err) "bun runtime for :managed-probe-busy is running but not connected"))
+        (is (str/includes? (str second-err) "is running but not connected"))
+        (is (< first-ms 7000))
+        (is (< second-ms 2000) "the second eval does not wait again")))))
+
+(deftest an-exited-process-is-started-again-by-the-next-compile
+  (with-watched-build (script-config :managed-probe-again)
+    (fn [{:keys [build-id]}]
+      (let [first-id (await-runtime build-id 10000)
+            runs-before (occurrences (log-text build-id) "managed-runtime-probe started")]
+        (is (some? first-id))
+        (api/cljs-eval build-id "(js/setTimeout #(js/process.exit 0) 100)" {})
+        (is (poll 10000 #(not (impl/managed-runtime-running? (worker-state build-id)))))
+        (let [{:keys [err]} (eval-after-select build-id "(println :unreachable)")]
+          (is (str/includes? (str err) "exited with code 0") "nothing restarts it by itself"))
+        (api/watch-compile! build-id)
+        (is (some? (await-runtime build-id 10000 :except first-id)))
+        (is (= {:out "true\n"} (eval-after-select build-id bun-check)))
+        (is (= (inc runs-before) (occurrences (log-text build-id) "managed-runtime-probe started"))
+            "the new run is appended; the earlier run's output is still there")))))
+
+(deftest a-build-that-stops-being-managed-loses-its-process
+  (with-watched-build (script-config :managed-probe-unmanaged)
     {:autobuild true}
     (fn [{:keys [build-id] :as config}]
-      (let [first-id (await-runtime build-id 10000)
-            old (:process (managed-state build-id))
-            moved "target/managed-probe-config-change/moved.js"]
-        (is (some? first-id))
-        (async/>!! (-> (api/get-worker build-id) :state-ref deref :channels :config-watch)
-                   {:config (assoc config :output-to moved)})
-        (is (some? (await-runtime build-id 15000 :except first-id))
-            "a process from the new config connected")
-        (is (= moved (-> (managed-state build-id) :config :output-to)))
-        (is (not (.isAlive ^Process old)) "the old process was stopped, SIGTERM or not")))))
+      (is (some? (await-runtime build-id 10000)))
+      (let [old (:process (managed-state build-id))]
+        (send-config! build-id (dissoc config :js-runtime))
+        (is (poll 15000 #(nil? (managed-state build-id))) "its entry is gone")
+        (is (poll 5000 #(not (.isAlive ^Process old))) "its process was stopped")
+        (is (= {:err no-runtime-message} (eval-after-select build-id "(println :unreachable)")))))))
 
 (deftest without-autobuild-a-config-change-keeps-the-process
-  ;; Without autobuild a config edit is only recorded, and the next manual
-  ;; compile still builds from the old config, so the process that matches
-  ;; it keeps serving rather than being killed.
+  ;; Without autobuild a config edit is only recorded and the next manual
+  ;; compile still builds from the old config, so the process keeps serving.
   (with-watched-build (script-config :managed-probe-config-kept)
     (fn [{:keys [build-id] :as config}]
-      (let [first-id (await-runtime build-id 10000)
-            old (:process (managed-state build-id))]
-        (is (some? first-id))
-        (async/>!! (-> (api/get-worker build-id) :state-ref deref :channels :config-watch)
-                   {:config (assoc config :output-to "target/managed-probe-config-kept/moved.js")})
+      (is (some? (await-runtime build-id 10000)))
+      (let [old (:process (managed-state build-id))]
+        (send-config! build-id (assoc config :output-to "target/managed-probe-config-kept/moved.js"))
         (api/watch-compile! build-id)
         (is (identical? old (:process (managed-state build-id))))
-        (is (= {:out "true\n"}
-               (eval-after-select build-id "(println (some? js/process.versions.bun))")))))))
+        (is (= {:out "true\n"} (eval-after-select build-id bun-check)))))))
 
 (deftest a-failed-compile-leaves-the-process-alone
   ;; build-failure stores (ex-data e), nil for a plain exception; the
@@ -255,23 +283,11 @@
       (let [old (:process (managed-state build-id))]
         (io/make-parents "target/managed-probe-blocked/not-a-dir")
         (spit "target/managed-probe-blocked/not-a-dir" "")
-        (async/>!! (-> (api/get-worker build-id) :state-ref deref :channels :config-watch)
-                   {:config (assoc config :output-to "target/managed-probe-blocked/not-a-dir/script.js")})
-        (api/watch-compile! build-id)
-        (is (contains? (-> (api/get-worker build-id) :state-ref deref) :failure-data))
-        (is (identical? old (:process (managed-state build-id))) "not replaced by a failed compile")
+        (send-config! build-id (assoc config :output-to "target/managed-probe-blocked/not-a-dir/script.js"))
+        (is (poll 15000 #(contains? (worker-state build-id) :failure-data))
+            "the autobuild compile failed")
+        (is (identical? old (:process (managed-state build-id))))
         (is (.isAlive ^Process old))))))
-
-(deftest a-process-that-never-connected-is-replaced-by-the-next-compile
-  (with-watched-build (script-config :managed-probe-busy-replaced
-                        :main 'shadow.cljs.managed-runtime-busy-probe/main)
-    (fn [{:keys [build-id]}]
-      (let [old (:process (managed-state build-id))]
-        (Thread/sleep 5500)
-        (api/watch-compile! build-id)
-        (is (not (identical? old (:process (managed-state build-id))))
-            "a fresh process replaced the one that never connected")
-        (is (not (.isAlive ^Process old)))))))
 
 (deftest a-lifecycle-error-does-not-undo-the-compile
   (with-watched-build (script-config :managed-probe-lifecycle-error)
@@ -279,98 +295,19 @@
       (with-redefs [impl/start-managed-runtime (fn [_] (throw (AssertionError. "lifecycle")))]
         (api/stop-worker build-id)
         (api/watch (script-config build-id) {:autobuild false :sync true}))
-      (let [state (-> (api/get-worker build-id) :state-ref deref)]
+      (let [state (worker-state build-id)]
         (is (some? (:build-state state)) "the compiled build was kept")
         (is (not (contains? state :failure-data)))))))
 
 (deftest the-log-is-rotated-past-its-limit
   (let [build-id :managed-probe-rotate
-        log (io/file ".shadow-cljs" "shadow-managed-runtime-managed-probe-rotate.log")]
+        log (log-file build-id)
+        set-aside (io/file (str (.getPath log) ".1"))]
+    (io/delete-file set-aside true)
     (io/make-parents log)
     (spit log (apply str (repeat (* 1100 1024) "x")))
     (with-watched-build (script-config build-id)
       (fn [_]
         (is (some? (await-runtime build-id 10000)))
-        (is (.exists (io/file (str (.getPath log) ".1"))) "the full log was set aside")
+        (is (.exists set-aside) "the full log was set aside")
         (is (str/starts-with? (slurp log) "--- bun runtime started ---"))))))
-
-(deftest a-reconnecting-runtime-is-waited-for
-  ;; A process that had connected and is still alive is reconnecting (sleep,
-  ;; a blocked event loop): the eval waits rather than calling it a failure
-  ;; to connect, however long ago it started.
-  (let [alive (.start (ProcessBuilder. ^java.util.List ["sleep" "30"]))
-        state-ref (volatile! {:managed-runtime {:process alive :connected? true :restarts 0
-                                                :started-at (- (System/nanoTime) (* 600 1000000000))}
-                              :last-build-provides #{}
-                              :build-state {:shadow.build/config {:js-runtime :bun}}})
-        fake-worker {::impl/proc true :state-ref state-ref :build-id :managed-probe-reconnect}]
-    (try
-      (future (Thread/sleep 300)
-              (vswap! state-ref assoc :default-runtime-id "reconnected"))
-      (is (nil? (worker/await-managed-runtime fake-worker 5000)))
-      (is (= "reconnected" (:default-runtime-id @state-ref)))
-      (finally
-        (.destroy alive)))))
-
-(deftest no-wait-when-no-restart-will-come
-  ;; A connected process exited, but the build is no longer managed (its
-  ;; configure failed), so no restart is due.
-  (let [dead (doto (.start (ProcessBuilder. ^java.util.List ["true"])) (.waitFor))
-        state-ref (volatile! {:managed-runtime {:process dead :connected? true :restarts 0
-                                                :started-at (System/nanoTime)}
-                              :last-build-provides #{}
-                              :build-state nil
-                              :build-config {:js-runtime :bun}})
-        fake-worker {::impl/proc true :state-ref state-ref :build-id :managed-probe-no-restart}
-        [message ms] (timed #(worker/await-managed-runtime fake-worker 5000))]
-    (is (str/includes? (str message) "exited with code 0"))
-    (is (< ms 1000))))
-
-(deftest a-process-that-never-connects-costs-one-wait
-  ;; The wait is anchored to the process's start, so a region of forms
-  ;; against a process that cannot connect does not pay it once per form.
-  (with-watched-build (script-config :managed-probe-busy
-                        :main 'shadow.cljs.managed-runtime-busy-probe/main)
-    (fn [{:keys [build-id]}]
-      (let [[{first-err :err} first-ms] (timed #(eval-after-select build-id "(println :unreachable)"))
-            [{second-err :err} second-ms] (timed #(eval-after-select build-id "(println :unreachable)"))]
-        (is (str/includes? (str first-err) "did not connect within 5000 ms"))
-        (is (str/includes? (str second-err) "did not connect within 5000 ms"))
-        (is (< first-ms 7000))
-        (is (< second-ms 2000) "the second eval does not wait again")))))
-
-(deftest an-eval-before-the-first-compile-waits-for-the-runtime
-  ;; A build configured with :js-runtime has not compiled yet, so nothing
-  ;; can say whether it will be managed: the eval waits rather than giving
-  ;; the generic "No available JS runtime" at once.
-  (let [state-ref (volatile! {:build-config {:target :node-script :js-runtime :bun}
-                              :build-state nil
-                              :last-build-provides nil})
-        fake-worker {::impl/proc true :state-ref state-ref :build-id :managed-probe-early}]
-    (future (Thread/sleep 300)
-            (vswap! state-ref assoc :default-runtime-id "connected"))
-    (is (nil? (worker/await-managed-runtime fake-worker 5000)))
-    (is (= "connected" (:default-runtime-id @state-ref)) "it waited for the runtime")))
-
-(deftest an-eval-while-a-restart-is-due-waits-for-it
-  ;; A connected process has exited and the worker has not yet replaced it:
-  ;; the eval waits instead of reporting the exit.
-  (let [dead (doto (.start (ProcessBuilder. ^java.util.List ["true"])) (.waitFor))
-        state-ref (volatile! {:managed-runtime {:process dead :connected? true :restarts 0
-                                                :started-at (System/nanoTime)}
-                              :last-build-provides #{'shadow.cljs.devtools.client.node}
-                              :build-state {:shadow.build/config {:target :node-script :js-runtime :bun}}})
-        fake-worker {::impl/proc true :state-ref state-ref :build-id :managed-probe-restart-due}]
-    (future (Thread/sleep 300)
-            (vswap! state-ref assoc :default-runtime-id "restarted"))
-    (is (nil? (worker/await-managed-runtime fake-worker 5000)))))
-
-(deftest a-restart-keeps-the-crashed-process-output
-  (with-watched-build (script-config :managed-probe-log)
-    (fn [{:keys [build-id]}]
-      (let [first-id (await-runtime build-id 10000)
-            runs-before (occurrences (log-text build-id) "managed-runtime-probe started")]
-        (api/cljs-eval build-id "(js/setTimeout #(js/process.exit 0) 100)" {})
-        (is (some? (await-runtime build-id 10000 :except first-id)))
-        (is (= (inc runs-before) (occurrences (log-text build-id) "managed-runtime-probe started"))
-            "the restart appended its run; the crashed run's output is still there")))))
