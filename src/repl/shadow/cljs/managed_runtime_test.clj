@@ -96,6 +96,19 @@
   [build-id config]
   (async/>!! (-> (worker-state build-id) :channels :config-watch) {:config config}))
 
+(defn- collect-output
+  "A :log-chan for api/watch that keeps the worker's output messages in the
+  atom OUTPUT instead of printing them, so a test can check an expected
+  failure report rather than dump it. Drained continuously: the worker's
+  output mult waits on every tap."
+  [output]
+  (let [ch (async/chan)]
+    (async/go-loop []
+      (when-some [x (async/<! ch)]
+        (swap! output conj x)
+        (recur)))
+    ch))
+
 (defn- when-bun
   "Calls F, or passes vacuously when bun is not installed."
   [f]
@@ -299,18 +312,24 @@
 (deftest a-failed-compile-leaves-the-process-alone
   ;; build-failure stores (ex-data e), nil for a plain exception; the
   ;; failure still has to count as one.
-  (with-watched-build (script-config :managed-probe-failed-compile)
-    {:autobuild true}
-    (fn [{:keys [build-id] :as config}]
-      (is (some? (await-runtime build-id 10000)))
-      (let [old (:process (managed-state build-id))]
-        (io/make-parents "target/managed-probe-blocked/not-a-dir")
-        (spit "target/managed-probe-blocked/not-a-dir" "")
-        (send-config! build-id (assoc config :output-to "target/managed-probe-blocked/not-a-dir/script.js"))
-        (is (poll 15000 #(contains? (worker-state build-id) :failure-data))
-            "the autobuild compile failed")
-        (is (identical? old (:process (managed-state build-id))))
-        (is (.isAlive ^Process old))))))
+  (let [output (atom [])]
+    (with-watched-build (script-config :managed-probe-failed-compile)
+      {:autobuild true :log-chan (collect-output output)}
+      (fn [{:keys [build-id] :as config}]
+        (is (some? (await-runtime build-id 10000)))
+        (let [old (:process (managed-state build-id))]
+          (io/make-parents "target/managed-probe-blocked/not-a-dir")
+          (spit "target/managed-probe-blocked/not-a-dir" "")
+          (send-config! build-id (assoc config :output-to "target/managed-probe-blocked/not-a-dir/script.js"))
+          (is (poll 15000 #(contains? (worker-state build-id) :failure-data))
+              "the autobuild compile failed")
+          (is (poll 5000 #(some (fn [{:keys [type report]}]
+                                  (and (= :build-failure type)
+                                       (str/includes? report "not-a-dir/script.js")))
+                                @output))
+              "the failure report names the blocked output")
+          (is (identical? old (:process (managed-state build-id))))
+          (is (.isAlive ^Process old)))))))
 
 (deftest the-log-is-rotated-past-its-limit
   (let [build-id :managed-probe-rotate
