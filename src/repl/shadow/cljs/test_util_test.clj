@@ -9,3 +9,9 @@
 
 (deftest an-installed-program-is-available
   (is (true? (program-available? "bash"))))
+
+(deftest a-program-that-is-present-but-fails-throws
+  ;; `false` is on PATH and exits 1 whatever its arguments, as a present
+  ;; program whose exec is refused does; that must fail the run rather
+  ;; than read as absence
+  (is (thrown? clojure.lang.ExceptionInfo (program-available? "false"))))

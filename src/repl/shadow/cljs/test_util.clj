@@ -7,18 +7,26 @@
     (pprint x)))
 
 (defn program-available?
-  "True when PROGRAM is on the JVM's PATH and runs with --version.
+  "True when PROGRAM is on the JVM's PATH and runs with --version, false
+  when it is not on PATH.
 
-  Absence is asked of the shell's command -v, whose exit status says it as
-  data. Telling a missing executable apart from the IOException's message
-  was rejected: the JDK words errno 2 differently by version and launch
-  mechanism (\"error=2\", \"Exec failed, error: 2\"), and a mismatch turned
-  a missing bun into an error. Any exec failure, of sh or of PROGRAM (an
-  exec refused by a launch restriction), still throws, failing the run
-  instead of letting a test pass vacuously."
+  One shell asks command -v, whose exit status says absence as data (127),
+  then execs PROGRAM; every spawn on a Mac under a launch restriction is a
+  chance for the exec to be refused, so the probe spends one. Telling a
+  missing executable apart from the IOException's message was rejected:
+  the JDK words errno 2 differently by version and launch mechanism
+  (\"error=2\", \"Exec failed, error: 2\"), and a mismatch turned a missing
+  bun into an error. Any other failure, PROGRAM's exec refused or its
+  --version failing, throws, failing the run instead of letting a test
+  pass vacuously."
   [program]
-  (and (zero? (:exit (sh "sh" "-c" "command -v \"$1\"" "sh" program)))
-       (zero? (:exit (sh program "--version")))))
+  (let [{:keys [exit err]}
+        (sh "sh" "-c" "command -v \"$1\" >/dev/null || exit 127; exec \"$1\" --version" "sh" program)]
+    (case exit
+      0 true
+      127 false
+      (throw (ex-info (str program " is on PATH but does not run")
+               {:program program :exit exit :err err})))))
 
 (def ^:private bun-probe
   (delay (program-available? "bun")))
