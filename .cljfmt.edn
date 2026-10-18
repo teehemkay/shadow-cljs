@@ -1,0 +1,11 @@
+;; This fork tracks thheller/shadow-cljs, which does not use cljfmt. Its
+;; layout is upstream's, and a reformatted file conflicts with every later
+;; upstream sync, so cljfmt is told to rewrite nothing here: these are all
+;; of cljfmt 0.15's rewriting options that default to on. Tools that run
+;; cljfmt on save (an agent's edit hook, an editor) then leave files as
+;; written.
+{:indentation? false
+ :insert-missing-whitespace? false
+ :remove-consecutive-blank-lines? false
+ :remove-surrounding-whitespace? false
+ :remove-trailing-whitespace? false}
