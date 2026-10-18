@@ -351,7 +351,7 @@
 ;; defined with the rest of the managed runtime lifecycle, below
 (declare start-managed-runtime-after-build)
 
-(defn build-compile
+(defn build-compile*
   [{:keys [build-state macros-modified namespaces-modified] :as worker-state}]
   ;; this may be nil if configure failed, just silently do nothing for now
   (if (nil? build-state)
@@ -402,10 +402,19 @@
                           (map :provides)
                           (reduce set/union #{}))
                      :last-build-sources build-sources
-                     :last-build-macros build-macros)
-              (start-managed-runtime-after-build))))
+                     :last-build-macros build-macros))))
       (catch Exception e
         (build-failure worker-state e)))))
+
+(defn build-compile
+  "Compiles, then gives a managed build its JS process. The lifecycle step
+  runs outside the compile's try so nothing in it can turn a successful
+  compile into a reported build failure."
+  [worker-state]
+  (let [compiled (build-compile* worker-state)]
+    (if (:failure-data compiled)
+      compiled
+      (start-managed-runtime-after-build compiled))))
 
 ;; managed runtime lifecycle
 ;;
@@ -424,22 +433,40 @@
   process runs its code and never connects. Asking the build, rather than
   restating each target's injection rules (:ui-driven for :node-test,
   :devtools :enabled), keeps the two from drifting."
-  [{:keys [build-state]}]
+  [{:keys [build-state last-build-provides cli-opts]}]
   (boolean
     (and build-state
+         ;; node-repl pipes in its own process (repl-impl/node-repl*); a
+         ;; managed one beside it would take the REPL and its output
+         (not (:shadow.cljs.devtools.server.repl-impl/node-repl cli-opts))
          (target-shared/managed-runtime? (::build/config build-state))
-         (some #(= 'shadow.cljs.devtools.client.node
-                   (:ns (data/get-source-by-id build-state %)))
-               (:build-sources build-state)))))
+         (contains? last-build-provides 'shadow.cljs.devtools.client.node))))
 
 (defn stop-managed-runtime [{:keys [managed-runtime] :as worker-state}]
-  (when-let [{:keys [process]} managed-runtime]
-    (.destroy ^Process process))
+  ;; a failed launch leaves :error and no :process
+  (when-let [^Process process (:process managed-runtime)]
+    (.destroy process))
   (dissoc worker-state :managed-runtime))
 
 (defn managed-runtime-running? [{:keys [managed-runtime]}]
-  (when-let [{:keys [process]} managed-runtime]
-    (.isAlive ^Process process)))
+  (let [^Process process (:process managed-runtime)]
+    (boolean (and process (.isAlive process)))))
+
+(def ^:private managed-runtime-log-limit
+  "A log past this size is set aside as <log>.1 before the next start, so
+  it cannot grow without bound across restarts."
+  (* 1024 1024))
+
+(defn- open-managed-runtime-log
+  "The log a starting process appends to: a run marker after any earlier
+  run's output, which a restart keeps, so the crash that caused it stays
+  readable."
+  [^File log-file js-runtime-name]
+  (io/make-parents log-file)
+  (when (> (.length log-file) managed-runtime-log-limit)
+    (.renameTo log-file (io/file (str (.getPath log-file) ".1"))))
+  (spit log-file (str "--- " js-runtime-name " runtime started ---\n") :append true)
+  log-file)
 
 (defn start-managed-runtime
   "Starts the build's JS process, its output going to the runtime's log
@@ -461,17 +488,21 @@
             process
             (-> (ProcessBuilder. argv)
                 (.redirectErrorStream true)
-                (.redirectOutput log-file)
+                (.redirectOutput
+                  (java.lang.ProcessBuilder$Redirect/appendTo
+                    (open-managed-runtime-log log-file (name (target-shared/js-runtime config)))))
                 (.start))
 
             proc-control
             (:proc-control channels)]
 
-        ;; after the worker stopped proc-control is closed and this is dropped
+        ;; put!, never >!!: the callback may run on this worker thread or on a
+        ;; shared pool thread, and must not block either on a full channel.
+        ;; After the worker stopped proc-control is closed and this is dropped.
         (.thenAccept (.onExit process)
           (reify java.util.function.Consumer
             (accept [_ exited]
-              (>!! proc-control {:type :managed-runtime-exited :process exited}))))
+              (async/put! proc-control {:type :managed-runtime-exited :process exited}))))
 
         (log/debug ::managed-runtime-started
           {:build-id build-id
@@ -481,12 +512,15 @@
           :managed-runtime
           {:process process
            :log-file log-file
+           ;; anchors the REPL's connect wait to the process, not to each eval
+           :started-at (System/currentTimeMillis)
            :restarts restarts}))
       (catch Exception e
         (log/debug-ex e ::managed-runtime-launch-failed {:build-id build-id})
         (assoc worker-state
           :managed-runtime
-          {:error (.getMessage e)
+          ;; (str e), not .getMessage, which may be nil
+          {:error (str e)
            :restarts restarts})))))
 
 (defn start-managed-runtime-after-build
@@ -693,6 +727,11 @@
 (defn do-config-watch
   [{:keys [autobuild] :as worker-state} {:keys [config] :as msg}]
   (-> worker-state
+      ;; a process built from the old config would keep serving the REPL;
+      ;; the next successful compile starts one from the new config
+      (cond->
+        (not= config (:build-config worker-state))
+        (stop-managed-runtime))
       (assoc :build-config config)
       (cond->
         autobuild

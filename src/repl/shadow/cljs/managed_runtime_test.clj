@@ -9,11 +9,15 @@
   Needs a running shadow-cljs server (its nREPL port is read from
   .shadow-cljs/nrepl.port) and bun on PATH; without bun it passes vacuously."
   (:require
+    [clojure.core.async :as async]
+    [clojure.java.io :as io]
     [clojure.string :as str]
     [clojure.test :refer [deftest is testing]]
     [nrepl.core :as nrepl]
     [shadow.build.targets.shared :as shared]
     [shadow.cljs.devtools.api :as api]
+    [shadow.cljs.devtools.server.worker :as worker]
+    [shadow.cljs.devtools.server.worker.impl :as impl]
     [shadow.cljs.test-util :refer [bun-available?]]))
 
 (defn- shadow-nrepl-port []
@@ -157,3 +161,103 @@
             "a fresh process connected after the first exited")
         (is (= {:out "true\n"}
                (eval-after-select build-id "(println (some? js/process.versions.bun))")))))))
+
+(defn- managed-state [build-id]
+  (-> (api/get-worker build-id) :state-ref deref :managed-runtime))
+
+(defn- log-text [build-id]
+  (let [f (io/file ".shadow-cljs" (str "shadow-managed-runtime-" (name build-id) ".log"))]
+    (if (.exists f) (slurp f) "")))
+
+(defn- occurrences [s sub]
+  (count (re-seq (re-pattern (java.util.regex.Pattern/quote sub)) s)))
+
+(deftest a-failed-launch-is-retried-by-the-next-build
+  ;; The failed launch leaves no process; neither the next compile nor
+  ;; stopping the worker may trip over that.
+  (if-not (bun-available?)
+    (testing "Bun not installed"
+      (is true))
+    (let [{:keys [build-id] :as config} (script-config :managed-probe-relaunch)]
+      (with-redefs [shared/js-runtime-file-argv (fn [_] (throw (Exception.)))]
+        (api/watch config {:autobuild false :sync true}))
+      (try
+        (let [{:keys [err]} (eval-after-select build-id "(println :unreachable)")]
+          (is (str/includes? (str err) "bun runtime for :managed-probe-relaunch could not be launched: java.lang.Exception")
+              "an exception without a message still explains the failure"))
+        (api/watch-compile! build-id)
+        (is (nil? (-> (api/get-worker build-id) :state-ref deref :failure-data))
+            "the next compile is not reported as failed")
+        (is (some? (await-runtime build-id 10000)) "and it starts the runtime")
+        (finally
+          (api/stop-worker build-id))))))
+
+(deftest node-repl-gets-no-second-process
+  ;; node-repl pipes its own process; a managed one beside it would take the
+  ;; REPL and its output.
+  (with-watched-build (script-config :managed-probe-node-repl)
+    (fn [{:keys [build-id]}]
+      (let [state (-> (api/get-worker build-id) :state-ref deref)]
+        (is (true? (impl/managed-build? state)))
+        (is (false? (impl/managed-build?
+                      (assoc-in state [:cli-opts :shadow.cljs.devtools.server.repl-impl/node-repl] true))))))))
+
+(deftest a-config-change-replaces-the-process
+  (with-watched-build (script-config :managed-probe-config-change)
+    {:autobuild true}
+    (fn [{:keys [build-id] :as config}]
+      (let [first-id (await-runtime build-id 10000)
+            old (:process (managed-state build-id))]
+        (is (some? first-id))
+        (async/>!! (-> (api/get-worker build-id) :state-ref deref :channels :config-watch)
+                   {:config (assoc config :output-to "target/managed-probe-config-change/moved.js")})
+        (is (some? (await-runtime build-id 15000 :except first-id))
+            "a process built from the new config connected")
+        (is (not (.isAlive ^Process old)) "the old process was stopped")))))
+
+(deftest a-process-that-never-connects-costs-one-wait
+  ;; The wait is anchored to the process's start, so a region of forms
+  ;; against a process that cannot connect does not pay it once per form.
+  (with-watched-build (script-config :managed-probe-busy
+                        :main 'shadow.cljs.managed-runtime-busy-probe/main)
+    (fn [{:keys [build-id]}]
+      (let [[{first-err :err} first-ms] (timed #(eval-after-select build-id "(println :unreachable)"))
+            [{second-err :err} second-ms] (timed #(eval-after-select build-id "(println :unreachable)"))]
+        (is (str/includes? (str first-err) "did not connect within 5000 ms"))
+        (is (str/includes? (str second-err) "did not connect within 5000 ms"))
+        (is (< first-ms 7000))
+        (is (< second-ms 2000) "the second eval does not wait again")))))
+
+(deftest an-eval-before-the-first-compile-waits-for-the-runtime
+  ;; A build configured with :js-runtime has not compiled yet, so nothing
+  ;; can say whether it will be managed: the eval waits rather than giving
+  ;; the generic "No available JS runtime" at once.
+  (let [state-ref (volatile! {:build-config {:target :node-script :js-runtime :bun}
+                              :build-state nil})
+        fake-worker {::impl/proc true :state-ref state-ref :build-id :managed-probe-early}]
+    (future (Thread/sleep 300)
+            (vswap! state-ref assoc :default-runtime-id "connected"))
+    (is (nil? (worker/await-managed-runtime fake-worker 5000)))
+    (is (= "connected" (:default-runtime-id @state-ref)) "it waited for the runtime")))
+
+(deftest an-eval-while-a-restart-is-due-waits-for-it
+  ;; A connected process has exited and the worker has not yet replaced it:
+  ;; the eval waits instead of reporting the exit.
+  (let [dead (doto (.start (ProcessBuilder. ^java.util.List ["true"])) (.waitFor))
+        state-ref (volatile! {:managed-runtime {:process dead :connected? true :restarts 0
+                                                :started-at (System/currentTimeMillis)}
+                              :build-state {:shadow.build/config {:js-runtime :bun}}})
+        fake-worker {::impl/proc true :state-ref state-ref :build-id :managed-probe-restart-due}]
+    (future (Thread/sleep 300)
+            (vswap! state-ref assoc :default-runtime-id "restarted"))
+    (is (nil? (worker/await-managed-runtime fake-worker 5000)))))
+
+(deftest a-restart-keeps-the-crashed-process-output
+  (with-watched-build (script-config :managed-probe-log)
+    (fn [{:keys [build-id]}]
+      (let [first-id (await-runtime build-id 10000)
+            runs-before (occurrences (log-text build-id) "managed-runtime-probe started")]
+        (api/cljs-eval build-id "(js/setTimeout #(js/process.exit 0) 100)" {})
+        (is (some? (await-runtime build-id 10000 :except first-id)))
+        (is (= (inc runs-before) (occurrences (log-text build-id) "managed-runtime-probe started"))
+            "the restart appended its run; the crashed run's output is still there")))))

@@ -67,26 +67,36 @@ The worker loop owns the process. Its state lives under `:managed-runtime`:
 ```clojure
 {:managed-runtime {:process    <java.lang.Process>
                    :log-file   <java.io.File>
-                   :connected? true      ; set when a runtime connects while it is alive
-                   :restarts   0}}       ; renewed by each successful compile
+                   :started-at 1760000000000 ; anchors the REPL's connect wait
+                   :connected? true          ; set when a runtime connects while it is alive
+                   :restarts   0}}           ; renewed by each successful compile
 ;; or, when the launch threw:
 {:managed-runtime {:error "<exception message>" :restarts 0}}
 ```
 
 - **`managed-build?`** — asks the *compiled* build: `managed-runtime?` on its
   merged config (where `--js-runtime` lands, through `:config-merge`), and
-  `shadow.cljs.devtools.client.node` among its sources. Reading the build rather
+  `shadow.cljs.devtools.client.node` among its `:last-build-provides`. A
+  `node-repl` worker is never managed: it pipes in its own process. Reading the build rather
   than restating each target's injection rules (`:ui-driven` for `:node-test`,
   `:devtools :enabled`) keeps the two from drifting. It is the *presence* of
   `:js-runtime` that opts in, not its value: `:js-runtime :node` gets a managed
   `node` process the same way.
-- **`start-managed-runtime-after-build`** — called at the end of every
-  successful `build-compile`: renews the restart allowance and starts a process
-  when the build is managed and none is alive.
+- **`start-managed-runtime-after-build`** — called by `build-compile` after a
+  successful compile, outside the compile's `try`, so nothing in it can turn a
+  good compile into a reported failure: renews the restart allowance and starts
+  a process when the build is managed and none is alive.
 - **`start-managed-runtime`** — writes the bootstrap, spawns the process with
-  `js-runtime-file-argv` and its output redirected to the log file, and posts
-  the process's exit back to the loop as `:managed-runtime-exited`. A launch
-  that throws leaves `:error` instead.
+  `js-runtime-file-argv` and its output appended to the log file (after a run
+  marker; a log past 1 MB is first set aside as `<log>.1`), and posts the
+  process's exit back to the loop as `:managed-runtime-exited` with `put!`,
+  never a blocking put. A launch that throws leaves `:error` instead.
+- **`do-config-watch`** — a changed build config stops the live process; the
+  next successful compile starts one from the new config.
+- **`:connected?` is an approximation**: any runtime connecting while the
+  process is alive sets it, because the node client's hello carries no process
+  identity. Adding the pid to `shadow.cljs.devtools.client.node`'s client info
+  would make it exact, at the cost of diverging from upstream's client.
 - **`:managed-runtime-exited`** — restarts a process that had connected, once
   per build; one that never connected stays down until the next build, so a
   `:main` that exits is not re-run in a loop.
@@ -99,10 +109,13 @@ Every REPL frontend evaluates through `repl-impl/do-repl` (nREPL, stdin, prepl,
 `api/cljs-eval`), and none of them starts the process. When an eval finds no
 runtime, `worker/await-managed-runtime` reads the worker's state — never sending
 the loop a message, so it cannot block on a busy, stopped or failed worker, and
-is safe on the worker's own thread — and waits up to 5 s while the process is
-alive but not yet connected. Otherwise it returns why there is none (the launch
-error, or the exit code with the end of the log), which `do-repl` prints in
-place of the generic "No available JS runtime".
+is safe on the worker's own thread — and waits while one may still come: up to
+5 s from the process's `:started-at`, while a restart of a connected process is
+due, or before the first compile of a build configured with `:js-runtime`.
+Otherwise it returns why there is none (the launch error, or the exit code with
+the end of the log), which `do-repl` prints in place of the generic "No
+available JS runtime". Anchoring the wait to the process means a region of
+forms against a process that cannot connect pays it once, not once per form.
 
 ### Standalone Node REPL — `shadow.cljs.devtools.server.repl-impl`
 
