@@ -4,9 +4,11 @@
   (:require
     [clojure.core.async :as async]
     [clojure.test :refer (deftest is)]
-    [shadow.cljs.devtools.server.web.websocket :as ws])
+    [shadow.cljs.devtools.server.web.websocket :as ws]
+    [shadow.http.server :as http-server])
   (:import
-    [shadow.http.server WebSocketConnection]))
+    [shadow.cljs.devtools.server.web.websocket GuardedWebSocketHandler]
+    [shadow.http.server WebSocketConnection WebSocketHandler]))
 
 (defn- failing-connection
   "A WebSocketConnection whose text sends throw EX, recording each attempt in
@@ -56,3 +58,15 @@
     (async/close! ws-out)
     (ws/write-loop connection ws-out (promise))
     (is (= ["a" "b"] @sent))))
+
+(deftest the-started-handler-announces-its-close-to-the-write-loop
+  ;; start runs the write loop on the handler's own CLOSED and returns the
+  ;; handler shadow-http calls onClose on; that onClose must deliver the
+  ;; same promise, or every send failing as the peer leaves waits out the
+  ;; timeout and is rethrown
+  (let [handler (::http-server/handler (ws/ws-upgrade (async/chan) (async/chan 10)))
+        started (.start ^WebSocketHandler handler
+                  (reify WebSocketConnection
+                    (isOpen [_] true)))]
+    (.onClose ^WebSocketHandler started 1000 "")
+    (is (realized? (.-closed ^GuardedWebSocketHandler handler)))))
