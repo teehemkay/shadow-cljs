@@ -100,17 +100,22 @@
   [build-id config]
   (async/>!! (-> (worker-state build-id) :channels :config-watch) {:config config}))
 
-(defn- collect-failures
-  "A :log-chan for api/watch that keeps the worker's build-failure messages
-  in the atom FAILURES, so a test can check an expected failure report
-  rather than dump it. Every other message is printed as api/watch's own
-  dump would, so unexpected output still shows. Drained continuously: the
-  worker's output mult waits on every tap."
-  [failures]
-  (let [ch (async/chan)]
+(defn- collect-expected-failures
+  "A :log-chan for api/watch that keeps the build-failure messages whose
+  :report satisfies EXPECTED? in the atom FAILURES, so a test can check an
+  expected failure report rather than dump it. Every other message, an
+  unexpected failure included, is printed as api/watch's own dump would.
+
+  Duplicates util/stdout-dump's drain loop on purpose: stdout-dump reads
+  through a one-slot sliding buffer that drops a message the next one
+  overtakes, which is how this test's report used to vanish. The buffer
+  here keeps every message without making the worker, whose output mult
+  waits on every tap, wait on the printing."
+  [expected? failures]
+  (let [ch (async/chan 1024)]
     (async/go-loop []
       (when-some [x (async/<! ch)]
-        (if (= :build-failure (:type x))
+        (if (and (= :build-failure (:type x)) (expected? (:report x)))
           (swap! failures conj x)
           (util/print-worker-out x false))
         (recur)))
@@ -168,10 +173,11 @@
   ([{:keys [build-id] :as config} cli-opts f]
    (when-bun
      (fn []
-       ;; a worker left by an aborted run would ignore CLI-OPTS
-       (assert (= :watching (api/watch config (merge {:autobuild false :sync true} cli-opts)))
-               (str build-id " is already being watched"))
        (try
+         ;; a worker left by an aborted run would ignore CLI-OPTS; failing
+         ;; here still stops it, so the next run starts clean
+         (assert (= :watching (api/watch config (merge {:autobuild false :sync true} cli-opts)))
+                 (str build-id " was already being watched"))
          (f config)
          (finally
            (api/stop-worker build-id)))))))
@@ -241,11 +247,13 @@
             (is (< ms (if (zero? i) 7000 2000))
                 "a process already known to have exited is reported without a wait")))))))
 
-(defn- logged-launch-failure? [records]
-  (and (= 1 (count records))
-       (let [^LogRecord record (first records)]
-         (and (= Level/WARNING (.getLevel record))
-              (instance? java.io.FileNotFoundException (.getThrown record))))))
+(defn- level-and-cause
+  "[level exception-class] of each log record, so a mismatch shows what was
+  logged."
+  [records]
+  (mapv (fn [^LogRecord record] [(.getLevel record) (class (.getThrown record))]) records))
+
+(def ^:private blocked-launch-logged [[Level/WARNING java.io.FileNotFoundException]])
 
 (deftest a-runtime-that-cannot-be-launched-is-reported
   (block-launch! :managed-probe-no-launch)
@@ -257,8 +265,9 @@
             (let [[{:keys [out err]} ms] (timed #(eval-after-select build-id "(println :unreachable)"))]
               (is (nil? out))
               (is (str/includes? (str err) "bun runtime for :managed-probe-no-launch could not be launched: java.io.FileNotFoundException"))
-              (is (< ms 2000) "a failed launch never blocks the eval"))))
-        (is (logged-launch-failure? @records) "the failed launch is logged once, as a warning")))
+              (is (< ms 2000) "a failed launch never blocks the eval"))
+            (is (= blocked-launch-logged (level-and-cause @records))
+                "the failed launch is logged once, as a warning")))))
     (finally
       (unblock-launch! :managed-probe-no-launch))))
 
@@ -277,8 +286,9 @@
             (api/watch-compile! build-id)
             (is (not (contains? (worker-state build-id) :failure-data))
                 "the next compile is not reported as failed")
-            (is (some? (await-runtime build-id 10000)) "and it starts the runtime")))
-        (is (logged-launch-failure? @records) "only the blocked launch is logged as failed")))
+            (is (some? (await-runtime build-id 10000)) "and it starts the runtime")
+            (is (= blocked-launch-logged (level-and-cause @records))
+                "only the blocked launch is logged as failed")))))
     (finally
       (unblock-launch! :managed-probe-relaunch))))
 
@@ -356,7 +366,8 @@
   ;; failure still has to count as one.
   (let [failures (atom [])]
     (with-watched-build (script-config :managed-probe-failed-compile)
-      {:autobuild true :log-chan (collect-failures failures)}
+      {:autobuild true
+       :log-chan (collect-expected-failures #(str/includes? % "not-a-dir") failures)}
       (fn [{:keys [build-id] :as config}]
         (is (some? (await-runtime build-id 10000)))
         (let [old (:process (managed-state build-id))]
@@ -365,9 +376,7 @@
           (send-config! build-id (assoc config :output-to "target/managed-probe-blocked/not-a-dir/script.js"))
           (is (poll 15000 #(contains? (worker-state build-id) :failure-data))
               "the autobuild compile failed")
-          (is (poll 5000 #(some (fn [{:keys [report]}] (str/includes? report "not-a-dir"))
-                                @failures))
-              "the failure report names the blocked output")
+          (is (poll 5000 #(seq @failures)) "the failure report names the blocked output")
           (is (identical? old (:process (managed-state build-id))))
           (is (.isAlive ^Process old)))))))
 
