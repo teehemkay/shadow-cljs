@@ -1,0 +1,26 @@
+#+TITLE: The managed runtime, owned by the worker and cut back to one rule
+#+DATE: [2026-10-18 Sun 20:20]
+#+AUTHOR: Claude Code (claude-opus-5-5)
+#+PROJECT: shadow-cljs
+
+* Context
+
+Context: [[my:shadow-cljs/doc/js-runtime-architecture.md][the js-runtime architecture doc]] (debugging, post-merge).
+Triggered by tmk's =C-c C-c= on kiln's ClojureScript spike blocks returning nothing through CIDER.
+
+A watched =:js-runtime :bun= build got its Bun process only from =shadow/repl=; CIDER selects with =nrepl-select=, which never started it, so every eval answered "No available JS runtime" on =err=. Fast-forwarded into =master= at [[orgit-rev:~/dev/my/shadow-cljs::4fd2ecd1fffd91928428e96c847fd57861e124b9][4fd2ecd1]] plus the todo; =lein test= is green on it. kiln still uses the published =3.4.11-bun= jar, so the fix reaches it only through a new build.
+
+* Project Notes
+
+** Key Decisions
+
+- *The worker owns the process; evals only read its state.* One rule: after a successful compile, a managed build with no live process gets one, and a build that is no longer managed loses its. An eval waits only while a new process is inside its 5 s connect window, counted from the process's start, then says why there is no runtime, with that run's log.
+- *Which builds qualify is asked of the compiled build*: =:js-runtime= in the merged config (where =--js-runtime= lands through =:config-merge=) and the node REPL client among its provides. A plain =:node-test= build runs its suite and exits, so it gets none.
+- *Restart and replacement policies were built and removed*, [[orgit-rev:~/dev/my/shadow-cljs::3806490da122cf409c54081c5d994068af91f9aa][3806490d]]. Each depended on timing inside the compile loop and on the others, and four review rounds kept finding new interactions. The architecture doc records them as rejected.
+- *A =.cljfmt.edn= that rewrites nothing* keeps an agent's formatting hook from re-indenting upstream code, once that hook reads the project's config.
+
+** Gotchas
+
+- Starting the runtime from inside =repl-impl/do-repl= looked like the one place every path passes. It was, and that is why it failed: a blocking request to the worker from the eval loop could hang forever on a failed launch and deadlock a build hook on the worker thread.
+- =build-failure= stores =(ex-data e)=, which is nil for a plain exception, so "did the compile fail" is =(contains? state :failure-data)=, never its value.
+- Test fixtures written before the change hid the =:node-test= problem: the March plan's manual check used =:ui-driven true=, the one shape that works.
