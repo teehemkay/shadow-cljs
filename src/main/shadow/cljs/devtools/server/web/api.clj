@@ -2,7 +2,7 @@
   (:require
     [clojure.core.async :as async :refer (go >! <! alt!! >!! <!!)]
     [clojure.set :as set]
-    [shadow.http.server :as http-server]
+    [shadow.cljs.devtools.server.web.websocket :as websocket]
     [shadow.jvm-log :as log]
     [shadow.cljs.devtools.server.web.common :as common]
     [shadow.http.router :as http]
@@ -115,13 +115,13 @@
       (let [ws-in (async/chan)
             ws-out (async/chan 1 (map transit-str))]
         (async/>!! ws-out {:op :access-denied})
-        (http-server/ws-upgrade ws-in ws-out))
+        (websocket/ws-upgrade ws-in ws-out))
 
       ;; relay can be very chatty, try to not drop too many messages
       ;; while also not buffering too much
       (let [ws-in (async/chan 4096 (map transit-read))
             ws-out (async/chan 4096 (map transit-str))]
-        (http-server/ws-upgrade
+        (websocket/ws-upgrade
           ws-in
           ws-out
           (relay/connect relay ws-in ws-out {:remote true :websocket true}))))))
