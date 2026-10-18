@@ -21,7 +21,10 @@
     [shadow.cljs.devtools.server.runtime :as runtime]
     [shadow.cljs.devtools.server.util :as util]
     [shadow.cljs.devtools.server.worker.impl :as impl]
-    [shadow.cljs.test-util :refer [bun-available?]]))
+    [shadow.cljs.test-util :refer [bun-available?]]
+    [shadow.jvm-log :as log])
+  (:import
+    [java.util.logging Filter Level LogRecord]))
 
 (defn- shadow-nrepl-port []
   (parse-long (str/trim (slurp ".shadow-cljs/nrepl.port"))))
@@ -112,6 +115,27 @@
           (util/print-worker-out x false))
         (recur)))
     ch))
+
+(defn- capturing-launch-failures
+  "Calls F with an atom of the managed-runtime-launch-failed log records for
+  BUILD-ID, kept out of the log while F runs so a test can check an expected
+  warning rather than dump it; every other record is logged as usual. A
+  filter on shadow's logger, because a handler added beside the console one
+  sees the records but cannot keep them from it."
+  [build-id f]
+  (let [records (atom [])
+        message (log/log-msg ::impl/managed-runtime-launch-failed {:build-id build-id})
+        ^Filter previous (.getFilter log/logger)]
+    (.setFilter log/logger
+      (reify Filter
+        (isLoggable [_ record]
+          (if (= message (.getMessage record))
+            (do (swap! records conj record) false)
+            (or (nil? previous) (.isLoggable previous record))))))
+    (try
+      (f records)
+      (finally
+        (.setFilter log/logger previous)))))
 
 (defn- when-bun
   "Calls F, or passes vacuously when bun is not installed."
@@ -217,15 +241,24 @@
             (is (< ms (if (zero? i) 7000 2000))
                 "a process already known to have exited is reported without a wait")))))))
 
+(defn- logged-launch-failure? [records]
+  (and (= 1 (count records))
+       (let [^LogRecord record (first records)]
+         (and (= Level/WARNING (.getLevel record))
+              (instance? java.io.FileNotFoundException (.getThrown record))))))
+
 (deftest a-runtime-that-cannot-be-launched-is-reported
   (block-launch! :managed-probe-no-launch)
   (try
-    (with-watched-build (script-config :managed-probe-no-launch)
-      (fn [{:keys [build-id]}]
-        (let [[{:keys [out err]} ms] (timed #(eval-after-select build-id "(println :unreachable)"))]
-          (is (nil? out))
-          (is (str/includes? (str err) "bun runtime for :managed-probe-no-launch could not be launched: java.io.FileNotFoundException"))
-          (is (< ms 2000) "a failed launch never blocks the eval"))))
+    (capturing-launch-failures :managed-probe-no-launch
+      (fn [records]
+        (with-watched-build (script-config :managed-probe-no-launch)
+          (fn [{:keys [build-id]}]
+            (let [[{:keys [out err]} ms] (timed #(eval-after-select build-id "(println :unreachable)"))]
+              (is (nil? out))
+              (is (str/includes? (str err) "bun runtime for :managed-probe-no-launch could not be launched: java.io.FileNotFoundException"))
+              (is (< ms 2000) "a failed launch never blocks the eval"))))
+        (is (logged-launch-failure? @records) "the failed launch is logged once, as a warning")))
     (finally
       (unblock-launch! :managed-probe-no-launch))))
 
@@ -234,15 +267,18 @@
   ;; stopping the worker may trip over that.
   (block-launch! :managed-probe-relaunch)
   (try
-    (with-watched-build (script-config :managed-probe-relaunch)
-      (fn [{:keys [build-id]}]
-        (let [{:keys [err]} (eval-after-select build-id "(println :unreachable)")]
-          (is (str/includes? (str err) "could not be launched")))
-        (unblock-launch! build-id)
-        (api/watch-compile! build-id)
-        (is (not (contains? (worker-state build-id) :failure-data))
-            "the next compile is not reported as failed")
-        (is (some? (await-runtime build-id 10000)) "and it starts the runtime")))
+    (capturing-launch-failures :managed-probe-relaunch
+      (fn [records]
+        (with-watched-build (script-config :managed-probe-relaunch)
+          (fn [{:keys [build-id]}]
+            (let [{:keys [err]} (eval-after-select build-id "(println :unreachable)")]
+              (is (str/includes? (str err) "could not be launched")))
+            (unblock-launch! build-id)
+            (api/watch-compile! build-id)
+            (is (not (contains? (worker-state build-id) :failure-data))
+                "the next compile is not reported as failed")
+            (is (some? (await-runtime build-id 10000)) "and it starts the runtime")))
+        (is (logged-launch-failure? @records) "only the blocked launch is logged as failed")))
     (finally
       (unblock-launch! :managed-probe-relaunch))))
 
