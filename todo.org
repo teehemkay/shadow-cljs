@@ -38,13 +38,32 @@ The tests drive nREPL (=nrepl-select=) and =api/cljs-eval=; the stdin path, =api
 
 In a dev server started as =clojure -M:start no-go= plus =server/start!=, =repl-impl/node-repl*= compiles and launches its process, under bun or node alike, but no runtime connects within 8 s. Not caused by the managed-runtime work; unexplained. The node-repl test therefore asserts only that no managed process is added. From [[my:agent-skills/docs/implementations/2026/2026-10/2026-10-06-spike-skill-implementation.org::#session-1][the spike skill's implementation record, session 1]].
 
-** TODO The failed-compile test leaves shadow's trace uncaptured
+** DONE The failed-compile test leaves shadow's trace uncaptured
+CLOSED: [2026-10-18 Sun 20:29]
 :PROPERTIES:
 :CREATED:  [2026-10-18 Sun 19:54]
 :ID:       20261018T195432.663061
 :END:
 
 =a-failed-compile-leaves-the-process-alone= triggers a compile failure on purpose, and shadow prints its =FileNotFoundException= trace from the worker thread on every run; the test asserts the failure through =:failure-data= but does not capture or check that output. From [[my:agent-skills/docs/implementations/2026/2026-10/2026-10-06-spike-skill-implementation.org::#session-1][the spike skill's implementation record, session 1]].
+
+The trace was shadow's own =Build failure:= report, printed by =util/stdout-dump=, and it appeared only when that dump's one-slot sliding buffer did not drop it: absent in three single-test runs, present in a whole-namespace run. The test now hands =api/watch= a =:log-chan= that collects the worker's output, and asserts the report names the blocked output path.
+
+** TODO The launch-failure tests leave their warnings uncaptured
+:PROPERTIES:
+:CREATED:  [2026-10-18 Sun 20:29]
+:ID:       20261018T202955.491171
+:END:
+
+=a-runtime-that-cannot-be-launched-is-reported= and =a-failed-launch-is-retried-by-the-next-build= block the launch on purpose, and the worker logs =managed-runtime-launch-failed= at =WARNING= with a =FileNotFoundException= trace on every run. The output goes through shadow's JVM logging rather than the worker's output channel, so the =:log-chan= capture used for [[id:20261018T195432.663061][the failed-compile test]] does not reach it.
+
+** TODO A stopped runtime's websocket throws an uncaught SocketException
+:PROPERTIES:
+:CREATED:  [2026-10-18 Sun 20:29]
+:ID:       20261018T202955.497866
+:END:
+
+In one of two whole-namespace runs of =shadow.cljs.managed-runtime-test=, after =cljs-eval-evaluates-in-the-managed-runtime= and during =a-build-that-stops-being-managed-loses-its-process=, the log carried =Exception in thread "" java.net.SocketException: Socket closed= from =shadow.http.server.WebSocketExchange/sendFrame=, called from =CoreAsyncWebSocketHandler= on a virtual thread. The server writes a frame after the managed bun process's socket has closed. All tests passed both times; the trace is unasserted output and its root cause is unexamined.
 
 ** TODO The managed runtime's two known limitations
 :PROPERTIES:
