@@ -108,7 +108,7 @@
 
   Duplicates util/stdout-dump's drain loop on purpose: stdout-dump reads
   through a one-slot sliding buffer that drops a message the next one
-  overtakes, which is how this test's report used to vanish. The buffer
+  overtakes, and a test's expected report can be the one dropped. The buffer
   here keeps every message without making the worker, whose output mult
   waits on every tap, wait on the printing."
   [expected? failures]
