@@ -207,13 +207,16 @@
 
 (deftest the-console-repl-evaluates-in-the-managed-runtime
   ;; api/repl outside nREPL takes over stdin (repl-impl/stdin-takeover!), the
-  ;; path of `shadow-cljs cljs-repl`; it returns at the end of input.
+  ;; path of `shadow-cljs cljs-repl`; it returns at the end of input. Run
+  ;; from shadow's own nREPL, api/*nrepl-init* is bound and api/repl would
+  ;; turn the running session into a CLJS REPL instead, so it is unbound.
   (with-watched-build (script-config :managed-probe-console)
     (fn [{:keys [build-id]}]
       ;; the form's output, then its result
       (is (= "true\nnil\n"
              (with-out-str
-               (binding [*in* (clojure.lang.LineNumberingPushbackReader.
+               (binding [api/*nrepl-init* nil
+                         *in* (clojure.lang.LineNumberingPushbackReader.
                                 (java.io.StringReader. (str bun-check "\n")))]
                  (api/repl build-id {:prompt false}))))))))
 
