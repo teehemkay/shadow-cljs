@@ -22,8 +22,7 @@
     [shadow.cljs.devtools.server.util :as util]
     [shadow.cljs.devtools.server.worker.impl :as impl]
     [shadow.cljs.test-util :refer [bun-available?]]
-    [shadow.jvm-log :as log]
-    [shadow.remote.relay.api :as relay-api])
+    [shadow.jvm-log :as log])
   (:import
     [java.util.logging Filter Level LogRecord]))
 
@@ -396,44 +395,35 @@
           (is (identical? old (:process (managed-state build-id))))
           (is (.isAlive ^Process old)))))))
 
-(defn- on-worker-departure
-  "Connects a client to shadow's relay that calls F when BUILD-ID's worker
-  leaves the relay. Returns a function that disconnects it. Subscribes
-  through :request-clients, whose reply confirms the subscription before
-  this returns."
-  [build-id f]
-  (let [to-relay (async/chan 10)
-        from-relay (async/chan 100)]
-    (relay-api/connect (:relay (runtime/get-instance!)) to-relay from-relay {})
-    (async/<!! from-relay) ;; :welcome
-    (async/>!! to-relay {:op :hello :client-info {:type :managed-runtime-test}})
-    (async/>!! to-relay {:op :request-clients :notify true :notify-op ::worker-notify
-                         :query [:eq :shadow.cljs/worker-for build-id]})
-    (async/<!! from-relay) ;; :clients
-    (async/go-loop []
-      (when-some [{:keys [event-op]} (async/<! from-relay)]
-        (when (= :client-disconnect event-op)
-          (f))
-        (recur)))
-    #(async/close! to-relay)))
+(defn- worker-in-relay?
+  "True while BUILD-ID's worker is connected to shadow's relay."
+  [build-id]
+  (->> (-> (runtime/get-instance!) :relay :state-ref deref :clients vals)
+       (some #(= build-id (get-in % [:client-info :shadow.cljs/worker-for])))
+       (boolean)))
 
 (deftest the-worker-leaves-the-relay-before-its-runtime-stops
-  ;; The relay tells a build's runtimes when their worker leaves. A runtime
-  ;; stopped first gets that notice on a closing websocket, which shadow-http
-  ;; reports as an uncaught exception. The kill follows the relay's notices
-  ;; and a process takes milliseconds to exit, so the process is still alive
-  ;; when this observer, notified alongside the runtime, looks.
+  ;; The relay tells a build's runtimes when their worker leaves, offering
+  ;; the notice to each runtime's websocket. A runtime stopped first may
+  ;; have that websocket closed, and the refused offer logs
+  ;; client-not-keeping-up. Checked where the order is decided: the real
+  ;; stop-managed-runtime, wrapped to note whether the worker is still in
+  ;; the relay when its shutdown calls it. Watching for the departure from
+  ;; a relay client instead races that client's go block against the
+  ;; process's exit.
   (with-watched-build (script-config :managed-probe-worker-stop)
     (fn [{:keys [build-id]}]
       (is (some? (await-runtime build-id 10000)))
-      (let [^Process process (:process (managed-state build-id))
-            alive-at-departure (promise)
-            disconnect (on-worker-departure build-id #(deliver alive-at-departure (.isAlive process)))]
-        (try
-          (api/stop-worker build-id)
-          (is (true? (deref alive-at-departure 5000 ::not-notified)))
-          (finally
-            (disconnect)))))))
+      (let [stop-managed-runtime impl/stop-managed-runtime
+            worker-present (promise)]
+        ;; worker/stop waits for the worker's thread, so the shutdown runs
+        ;; inside the redefinition
+        (with-redefs [impl/stop-managed-runtime
+                      (fn [state]
+                        (deliver worker-present (worker-in-relay? build-id))
+                        (stop-managed-runtime state))]
+          (api/stop-worker build-id))
+        (is (false? (deref worker-present 0 ::not-stopped)))))))
 
 (deftest the-log-is-rotated-past-its-limit
   (let [build-id :managed-probe-rotate

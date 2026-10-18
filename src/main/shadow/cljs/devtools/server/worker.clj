@@ -335,10 +335,13 @@
              (when reload-npm
                (reload-npm/stop reload-npm))
              ;; leave the relay before stopping the managed runtime: the
-             ;; relay tells the build's runtimes this worker is gone, and a
-             ;; runtime stopped first gets that notice on a closing websocket,
-             ;; which shadow-http reports as an uncaught exception.
-             ;; connection-stop closes once the relay has queued the notice;
+             ;; relay offers the build's runtimes a notice that this worker
+             ;; is gone, and a runtime stopped first may have closed its
+             ;; websocket's channel, so the refused offer logs
+             ;; client-not-keeping-up. A send failing as the runtime dies is
+             ;; a separate case, which the guarded websocket handler covers.
+             ;; connection-stop closes once the relay has queued the notice,
+             ;; which never waits on a client since the relay only offers;
              ;; the timeout only bounds a relay that never answers.
              (async/close! to-relay)
              (alt!!
