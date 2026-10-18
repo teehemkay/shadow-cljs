@@ -44,7 +44,7 @@ In a dev server started as =clojure -M:start no-go= plus =server/start!=, =repl-
 
 The process did launch: it exited with code 1 about every 135 ms and =node-repl*= restarted it, its stderr going only to the worker's output channel, which nothing tapped. Two causes:
 
-- *Bun — fixed.* The prelude =shadow.build.node= generates detected stdin code only by =__dirname == '.'=; bun reports the cwd there, so imports resolved against the cwd and failed with ENOENT. It now also accepts a =__filename= ending in =[stdin]=, and the node-repl test asserts the process connects and evaluates under bun.
+- *Bun — fixed.* The prelude =shadow.build.node= generates detected stdin code only by a =__dirname= of a single dot; bun reports the cwd there, so imports resolved against the cwd and failed with ENOENT. It now also accepts a =__filename= ending in =[stdin]=, and the node-repl test asserts the process connects and evaluates under bun.
 - *Node — environmental.* This checkout has no =node_modules=, so the node REPL client's =ws= import fails; bun ships its own =ws=. Installing the =package.json= dependencies should cure it.
 
 ** DONE The failed-compile test leaves shadow's trace uncaptured
