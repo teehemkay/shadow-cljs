@@ -83,3 +83,51 @@
           (is (nil? out))
           (is (some? err))
           (is (str/includes? (str err) "bun runtime for :managed-probe-no-output did not connect within 5000 ms")))))))
+
+(deftest a-build-without-a-repl-client-starts-no-runtime
+  ;; A :node-test build that is not :ui-driven has no REPL client: started,
+  ;; it would run its whole suite on every eval and exit. The eval reports
+  ;; the generic message and nothing is spawned.
+  (if-not (bun-available?)
+    (testing "Bun not installed"
+      (is true))
+    (let [build-id :managed-probe-plain-node-test]
+      (api/watch {:build-id build-id
+                  :target :node-test
+                  :ns-regexp "^managed-runtime-test-matches-nothing$"
+                  :autorun false
+                  :output-to (str "target/" (name build-id) "/script.js")
+                  :js-runtime :bun}
+        {:autobuild false :sync true})
+      (try
+        (is (= {:err "No available JS runtime.\nSee https://shadow-cljs.github.io/docs/UsersGuide.html#repl-troubleshooting"}
+               (eval-after-select
+                 (format "(shadow.cljs.devtools.api/nrepl-select %s)" build-id)
+                 "(println :unreachable)")))
+        (is (nil? (-> (api/get-worker build-id) :state-ref deref :managed-runtime))
+            "no JS process was started")
+        (finally
+          (api/stop-worker build-id))))))
+
+(deftest a-ui-driven-node-test-build-reaches-its-runtime
+  ;; :ui-driven is what gives a :node-test build a REPL client; its main
+  ;; then waits for the UI instead of running the suite and exiting.
+  (if-not (bun-available?)
+    (testing "Bun not installed"
+      (is true))
+    (let [build-id :managed-probe-ui-driven]
+      (api/watch {:build-id build-id
+                  :target :node-test
+                  :ns-regexp "^managed-runtime-test-matches-nothing$"
+                  :ui-driven true
+                  :autorun false
+                  :output-to (str "target/" (name build-id) "/script.js")
+                  :js-runtime :bun}
+        {:autobuild false :sync true})
+      (try
+        (is (= {:out "true\n"}
+               (eval-after-select
+                 (format "(shadow.cljs.devtools.api/nrepl-select %s)" build-id)
+                 "(println (some? js/process.versions.bun))")))
+        (finally
+          (api/stop-worker build-id))))))
