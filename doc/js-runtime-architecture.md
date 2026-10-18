@@ -76,10 +76,12 @@ longer managed loses its. Its state lives under `:managed-runtime`:
 
 - **`managed-build?`** — asks the *compiled* build: `managed-runtime?` on its
   merged config (where `--js-runtime` lands, through `:config-merge`), and
-  `shadow.cljs.devtools.client.node` among its `:last-build-provides`. A
-  `node-repl` worker is never managed: it pipes in its own process. Reading the
-  build rather than restating each target's injection rules (`:ui-driven` for
-  `:node-test`, `:devtools :enabled`) keeps the two from drifting. It is the
+  `shadow.cljs.devtools.client.node` among its `:last-build-provides`.
+  `node-repl*` keeps `--js-runtime` out of its own build's `:config-merge`
+  (it only picks that process's executable), so its worker is not managed.
+  Reading the build rather than restating each target's injection rules
+  (`:ui-driven` for `:node-test`, `:devtools :enabled`) keeps the two from
+  drifting. It is the
   *presence* of `:js-runtime` that opts in, not its value: `:js-runtime :node`
   gets a managed `node` process the same way.
 - **`start-managed-runtime-after-build`** — called by `build-compile` after a
@@ -90,10 +92,19 @@ longer managed loses its. Its state lives under `:managed-runtime`:
   live process: nothing. Otherwise: start one.
 - **`start-managed-runtime`** — writes the bootstrap and spawns the process
   with `js-runtime-file-argv`, its output appended to the log file after a run
-  marker (a log past 1 MB is first set aside as `<log>.1`). A launch that
-  throws leaves `:error` instead.
-- **`stop-managed-runtime`** — `.destroy` and clear. Also called from the
+  marker (before each start, a log past 1 MB is set aside as `<log>.1`; a
+  single long run is not capped). A launch that throws leaves `:error`
+  instead, and is logged at warn level.
+- **`stop-managed-runtime`** — SIGTERM, then `destroyForcibly` after a 2 s
+  grace: the bootstrap's `setInterval` keeps the event loop alive, so a `:main`
+  that handles SIGTERM would otherwise never exit. Also called from the
   worker's `:do-shutdown` closure in `worker.clj`.
+
+**Known limitations.** The process is held only in the worker's immutable
+state, so a later step in the same loop message that throws, rolling the state
+back, loses the reference: `build-compile` has to stay the last step that can
+start one. An eval waiting in the connect window when the worker stops reports
+the destroyed process as having exited (code 143).
 
 **Rejected: restart and replacement policies.** Restarting a process that
 exited after connecting, replacing one started from another config, and
@@ -116,7 +127,9 @@ is safe on the worker's own thread. It waits only while a new process is within
 pays the wait once. Otherwise it returns why there is none — the launch error,
 the exit code, or that the process is running but not connected, each with the
 end of the current run's output after the last run marker — which `do-repl`
-prints in place of the generic "No available JS runtime".
+prints in place of the generic "No available JS runtime". Within one input, a
+form that gets the same reason as the one before prints only its first line,
+so a region of forms does not repeat the log tail.
 
 ### Standalone Node REPL — `shadow.cljs.devtools.server.repl-impl`
 
@@ -194,8 +207,8 @@ worker by proc-id. REPL evaluation messages are then routed through the relay to
 the connected runtime.
 
 The managed runtime process stays alive via the `setInterval` in the bootstrap
-script. When the worker shuts down, `stop-managed-runtime` calls `.destroy` on
-the process, which terminates it.
+script. When the worker shuts down, `stop-managed-runtime` sends SIGTERM and,
+after a 2 s grace, forcibly kills a process that is still alive.
 
 ## Process Ownership
 

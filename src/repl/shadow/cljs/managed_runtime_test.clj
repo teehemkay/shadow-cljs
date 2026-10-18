@@ -15,7 +15,6 @@
     [clojure.string :as str]
     [clojure.test :refer [deftest is testing]]
     [nrepl.core :as nrepl]
-    [shadow.build.targets.shared :as shared]
     [shadow.cljs.devtools.api :as api]
     [shadow.cljs.devtools.server.js-runtime :as js-runtime]
     [shadow.cljs.devtools.server.repl-impl :as repl-impl]
@@ -53,18 +52,6 @@
         result (f)]
     [result (- (System/currentTimeMillis) start)]))
 
-(defn- await-runtime
-  "The first REPL runtime connected to BUILD-ID within TIMEOUT-MS that is not
-  EXCEPT, or nil."
-  [build-id timeout-ms & {:keys [except]}]
-  (let [deadline (+ (System/currentTimeMillis) timeout-ms)]
-    (loop []
-      (let [ids (->> (api/repl-runtimes build-id) (map :client-id) (remove #{except}))]
-        (cond
-          (seq ids) (first ids)
-          (> (System/currentTimeMillis) deadline) nil
-          :else (do (Thread/sleep 50) (recur)))))))
-
 (defn- poll
   "The first truthy value of F within TIMEOUT-MS, or nil."
   [timeout-ms f]
@@ -74,6 +61,19 @@
           (when (< (System/currentTimeMillis) deadline)
             (Thread/sleep 50)
             (recur))))))
+
+(defn- await-runtime
+  "The first REPL runtime connected to BUILD-ID within TIMEOUT-MS that is not
+  EXCEPT, or nil."
+  [build-id timeout-ms & {:keys [except]}]
+  (poll timeout-ms
+    #(->> (api/repl-runtimes build-id) (map :client-id) (remove #{except}) first)))
+
+(defn- await-no-runtime
+  "Waits until the worker has dropped BUILD-ID's runtimes: a process that
+  exits disconnects through a separate relay notice."
+  [build-id]
+  (poll 10000 #(empty? (api/repl-runtimes build-id))))
 
 (defn- worker-state [build-id]
   (-> (api/get-worker build-id) :state-ref deref))
@@ -96,20 +96,42 @@
   [build-id config]
   (async/>!! (-> (worker-state build-id) :channels :config-watch) {:config config}))
 
+(defn- when-bun
+  "Calls F, or passes vacuously when bun is not installed."
+  [f]
+  (if-not (bun-available?)
+    (testing "Bun not installed"
+      (is true))
+    (f)))
+
+(defn- bootstrap-path [build-id]
+  (js-runtime/bootstrap-file (get-in (runtime/get-instance!) [:config :cache-root]) build-id))
+
+(defn- block-launch!
+  "Makes the next launch for BUILD-ID fail for real: a directory where its
+  bootstrap file is written."
+  [build-id]
+  (let [path (bootstrap-path build-id)]
+    ;; an earlier run's bootstrap file would make .mkdirs a silent no-op
+    (io/delete-file path true)
+    (assert (.mkdirs path) (str "could not create " path))))
+
+(defn- unblock-launch! [build-id]
+  (io/delete-file (bootstrap-path build-id) true))
+
 (defn- with-watched-build
   "Watch CONFIG, compiled once, call F with it, and stop the worker, which
   also stops its JS process. CLI-OPTS go to api/watch. Without bun, F does
   not run and the test passes vacuously."
   ([config f] (with-watched-build config {} f))
   ([{:keys [build-id] :as config} cli-opts f]
-   (if-not (bun-available?)
-     (testing "Bun not installed"
-       (is true))
-     (do (api/watch config (merge {:autobuild false :sync true} cli-opts))
-         (try
-           (f config)
-           (finally
-             (api/stop-worker build-id)))))))
+   (when-bun
+     (fn []
+       (api/watch config (merge {:autobuild false :sync true} cli-opts))
+       (try
+         (f config)
+         (finally
+           (api/stop-worker build-id)))))))
 
 (def ^:private no-runtime-message
   "No available JS runtime.\nSee https://shadow-cljs.github.io/docs/UsersGuide.html#repl-troubleshooting")
@@ -173,44 +195,43 @@
             (is (= 1 (occurrences (str err) "managed-runtime-exit-probe exits while loading"))
                 "the process's own output names the cause, from this run only")
             (is (str/ends-with? (str err) "\n"))
-            (is (< ms 7000))))))))
+            (is (< ms (if (zero? i) 7000 2000))
+                "a process already known to have exited is reported without a wait")))))))
 
 (deftest a-runtime-that-cannot-be-launched-is-reported
-  (with-redefs [shared/js-runtime-file-argv (fn [_] ["/nonexistent/managed-probe-js-runtime"])]
+  (block-launch! :managed-probe-no-launch)
+  (try
     (with-watched-build (script-config :managed-probe-no-launch)
       (fn [{:keys [build-id]}]
         (let [[{:keys [out err]} ms] (timed #(eval-after-select build-id "(println :unreachable)"))]
           (is (nil? out))
-          (is (str/includes? (str err) "bun runtime for :managed-probe-no-launch could not be launched"))
-          (is (< ms 2000) "a failed launch never blocks the eval"))))))
+          (is (str/includes? (str err) "bun runtime for :managed-probe-no-launch could not be launched: java.io.FileNotFoundException"))
+          (is (< ms 2000) "a failed launch never blocks the eval"))))
+    (finally
+      (unblock-launch! :managed-probe-no-launch))))
 
 (deftest a-failed-launch-is-retried-by-the-next-build
   ;; The failed launch leaves no process; neither the next compile nor
   ;; stopping the worker may trip over that.
-  (if-not (bun-available?)
-    (testing "Bun not installed"
-      (is true))
-    (let [{:keys [build-id] :as config} (script-config :managed-probe-relaunch)]
-      (with-redefs [shared/js-runtime-file-argv (fn [_] (throw (Exception.)))]
-        (api/watch config {:autobuild false :sync true}))
-      (try
+  (block-launch! :managed-probe-relaunch)
+  (try
+    (with-watched-build (script-config :managed-probe-relaunch)
+      (fn [{:keys [build-id]}]
         (let [{:keys [err]} (eval-after-select build-id "(println :unreachable)")]
-          (is (str/includes? (str err) "bun runtime for :managed-probe-relaunch could not be launched: java.lang.Exception")
-              "an exception without a message still explains the failure"))
+          (is (str/includes? (str err) "could not be launched")))
+        (unblock-launch! build-id)
         (api/watch-compile! build-id)
         (is (not (contains? (worker-state build-id) :failure-data))
             "the next compile is not reported as failed")
-        (is (some? (await-runtime build-id 10000)) "and it starts the runtime")
-        (finally
-          (api/stop-worker build-id))))))
+        (is (some? (await-runtime build-id 10000)) "and it starts the runtime")))
+    (finally
+      (unblock-launch! :managed-probe-relaunch))))
 
 (deftest node-repl-gets-no-second-process
   ;; node-repl pipes in its own process; a managed one beside it would take
   ;; the REPL and its output. Options as the CLI's --js-runtime builds them.
-  (if-not (bun-available?)
-    (testing "Bun not installed"
-      (is true))
-    (let [build-id :managed-probe-node-repl
+  (when-bun
+    #(let [build-id :managed-probe-node-repl
           worker (repl-impl/node-repl* (runtime/get-instance!)
                    {:build-id build-id :js-runtime :bun :config-merge [{:js-runtime :bun}]})]
       (try
@@ -242,6 +263,7 @@
         (is (some? first-id))
         (api/cljs-eval build-id "(js/setTimeout #(js/process.exit 0) 100)" {})
         (is (poll 10000 #(not (impl/managed-runtime-running? (worker-state build-id)))))
+        (is (await-no-runtime build-id))
         (let [{:keys [err]} (eval-after-select build-id "(println :unreachable)")]
           (is (str/includes? (str err) "exited with code 0") "nothing restarts it by itself"))
         (api/watch-compile! build-id)
@@ -259,6 +281,7 @@
         (send-config! build-id (dissoc config :js-runtime))
         (is (poll 15000 #(nil? (managed-state build-id))) "its entry is gone")
         (is (poll 5000 #(not (.isAlive ^Process old))) "its process was stopped")
+        (is (await-no-runtime build-id))
         (is (= {:err no-runtime-message} (eval-after-select build-id "(println :unreachable)")))))))
 
 (deftest without-autobuild-a-config-change-keeps-the-process
@@ -294,7 +317,8 @@
     (fn [{:keys [build-id]}]
       (with-redefs [impl/start-managed-runtime (fn [_] (throw (AssertionError. "lifecycle")))]
         (api/stop-worker build-id)
-        (api/watch (script-config build-id) {:autobuild false :sync true}))
+        (is (poll 5000 #(nil? (api/get-worker build-id))) "the old worker is gone")
+        (is (= :watching (api/watch (script-config build-id) {:autobuild false :sync true}))))
       (let [state (worker-state build-id)]
         (is (some? (:build-state state)) "the compiled build was kept")
         (is (not (contains? state :failure-data)))))))

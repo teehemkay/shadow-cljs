@@ -2,6 +2,7 @@
   (:require
     [clojure.core.async :as async :refer (go <! >! >!! <!! alt!!)]
     [clojure.java.io :as io]
+    [clojure.string :as str]
     [shadow.cljs :as-alias m]
     [shadow.cljs.repl :as repl]
     [shadow.cljs.devtools.server.worker :as worker]
@@ -163,12 +164,22 @@
 
                        (if-not runtime-id
                          (do (repl-stderr repl-state
-                               (or no-runtime-reason
-                                   "No available JS runtime.\nSee https://shadow-cljs.github.io/docs/UsersGuide.html#repl-troubleshooting"))
+                               (cond
+                                 ;; a region of forms gets the managed runtime's
+                                 ;; reason, with its log tail, once
+                                 (and no-runtime-reason
+                                      (= no-runtime-reason (::last-no-runtime-reason repl-state)))
+                                 (str (first (str/split-lines no-runtime-reason)) " (as above)\n")
+
+                                 no-runtime-reason
+                                 no-runtime-reason
+
+                                 :else
+                                 "No available JS runtime.\nSee https://shadow-cljs.github.io/docs/UsersGuide.html#repl-troubleshooting"))
                              (repl-result repl-state nil)
                              (repl-prompt repl-state)
                              (>!! read-lock 1)
-                             (recur repl-state))
+                             (recur (assoc repl-state ::last-no-runtime-reason no-runtime-reason)))
 
                          (let [msg {:op :cljs-eval
                                     :to runtime-id
@@ -415,7 +426,15 @@
          :output-to script-name}
 
         {:keys [proc-stop] :as worker}
-        (super/start-worker supervisor build-config (assoc opts ::node-repl true))
+        (super/start-worker supervisor build-config
+          (-> opts
+              (assoc ::node-repl true)
+              ;; --js-runtime picks this process's executable (below); kept
+              ;; out of the build's config so the worker does not also manage
+              ;; a process for it (worker.impl/managed-build?)
+              (cond->
+                (:config-merge opts)
+                (update :config-merge #(mapv (fn [m] (dissoc m :js-runtime)) %)))))
 
         result
         (worker/compile! worker)

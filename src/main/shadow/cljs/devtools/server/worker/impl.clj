@@ -442,12 +442,9 @@
   process runs its code and never connects. Asking the build, rather than
   restating each target's injection rules (:ui-driven for :node-test,
   :devtools :enabled), keeps the two from drifting."
-  [{:keys [build-state last-build-provides cli-opts]}]
+  [{:keys [build-state last-build-provides]}]
   (boolean
     (and build-state
-         ;; node-repl pipes in its own process (repl-impl/node-repl*); a
-         ;; managed one beside it would take the REPL and its output
-         (not (:shadow.cljs.devtools.server.repl-impl/node-repl cli-opts))
          (target-shared/managed-runtime? (::build/config build-state))
          (contains? last-build-provides 'shadow.cljs.devtools.client.node))))
 
@@ -457,10 +454,17 @@
   about a second."
   5000)
 
-(defn stop-managed-runtime [{:keys [managed-runtime] :as worker-state}]
+(defn stop-managed-runtime
+  "Stops the process: SIGTERM, then a forced kill after a grace period. The
+  bootstrap's setInterval keeps the event loop alive, so a :main that
+  handles SIGTERM (closing a server and letting the loop drain) would
+  otherwise never exit and orphan the process, its port and its log."
+  [{:keys [managed-runtime] :as worker-state}]
   ;; a failed launch leaves :error and no :process
   (when-let [^Process process (:process managed-runtime)]
-    (.destroy process))
+    (.destroy process)
+    (when-not (.waitFor process 2 java.util.concurrent.TimeUnit/SECONDS)
+      (.destroyForcibly process)))
   (dissoc worker-state :managed-runtime))
 
 (defn managed-runtime-running? [{:keys [managed-runtime]}]
@@ -526,7 +530,7 @@
            ;; System/nanoTime, so a clock step cannot stretch the connect window
            :started-at (System/nanoTime)}))
       (catch Exception e
-        (log/debug-ex e ::managed-runtime-launch-failed {:build-id build-id})
+        (log/warn-ex e ::managed-runtime-launch-failed {:build-id build-id})
         (assoc worker-state
           :managed-runtime
           ;; (str e), not .getMessage, which may be nil

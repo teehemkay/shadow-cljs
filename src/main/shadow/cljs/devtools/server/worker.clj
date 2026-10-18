@@ -67,23 +67,31 @@
     (<!! chan))
   proc)
 
+(defn- read-current-run
+  "The end of LOG-FILE after its last run marker: only the last bytes, since
+  the log keeps earlier runs and can be large."
+  [^File log-file]
+  (with-open [raf (java.io.RandomAccessFile. log-file "r")]
+    (let [len (.length raf)
+          n (int (min len 4000))
+          buf (byte-array n)
+          _ (.seek raf (- len n))
+          _ (.readFully raf buf)
+          window (String. buf java.nio.charset.StandardCharsets/UTF_8)
+          suffix impl/managed-runtime-run-marker-suffix
+          marker (str/last-index-of window suffix)]
+      (str/trimr (cond-> window
+                   marker (subs (+ marker (count suffix))))))))
+
 (defn- log-tail
-  "The end of the current run's output in a managed runtime's log, ready to
-  append to a message: only what follows the last run marker, and only the
-  last bytes, since the log keeps earlier runs and can be large."
+  "The current run's output from a managed runtime's log, ready to append to
+  a message. Best effort: a concurrent start may rotate the log away, and
+  quoting it must never fail the eval."
   [^File log-file]
   (let [text (when (and log-file (.exists log-file))
-               (with-open [raf (java.io.RandomAccessFile. log-file "r")]
-                 (let [len (.length raf)
-                       n (int (min len 4000))
-                       buf (byte-array n)]
-                   (.seek raf (- len n))
-                   (.readFully raf buf)
-                   (let [window (String. buf java.nio.charset.StandardCharsets/UTF_8)
-                         suffix impl/managed-runtime-run-marker-suffix
-                         marker (str/last-index-of window suffix)]
-                     (str/trimr (cond-> window
-                                  marker (subs (+ marker (count suffix)))))))))]
+               (try
+                 (read-current-run log-file)
+                 (catch java.io.IOException _ nil)))]
     (if (str/blank? text)
       (str "; it printed nothing. Log: " (some-> log-file .getPath) "\n")
       (str "; its output ends:\n" text "\nFull output: " (.getPath log-file) "\n"))))
