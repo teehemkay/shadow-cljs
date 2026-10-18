@@ -70,6 +70,11 @@ In two of three whole-namespace runs of =shadow.cljs.managed-runtime-test=, afte
 
 A fourth run showed two other faces of the same send, at the same two points: =NullPointerException: Deflater has been closed= from =PerMessageDeflate.compress= under the same =sendText= call, and a =WARNING= =:shadow.remote.relay.local/client-not-keeping-up= for the just-disconnected runtime.
 
+Root cause: shadow-http's =CoreAsyncWebSocketHandler= write loop sends whatever it took from =ws-out= with no guard, so a message in flight when the peer dies throws on the closing connection, uncaught on its virtual thread. The fork's managed runtime makes that common by killing a runtime while messages to it are in flight. Two paths do it:
+
+- *Worker shutdown — fixed.* =do-shutdown= stopped the runtime before the worker left the relay, so the relay's worker-departure notice went to a dead runtime. The worker now leaves the relay first and waits for =connection-stop=; =the-worker-leaves-the-relay-before-its-runtime-stops= covers it.
+- *A build that stops being managed — open.* =build-compile*= queues =:cljs-build-complete= for the runtimes, then =start-managed-runtime-after-build= kills the runtime at once, before the message clears shadow-http's async hops. Still seen in two of three whole-namespace runs, in =a-build-that-stops-being-managed-loses-its-process=. A reorder cannot help, since the message precedes the kill; the complete fix is a guarded write loop in shadow-http, which is upstream's jar.
+
 ** TODO The default watch output can drop a build-failure report
 :PROPERTIES:
 :CREATED:  [2026-10-18 Sun 20:37]
