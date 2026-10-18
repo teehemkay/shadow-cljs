@@ -33,13 +33,19 @@ The tests drive nREPL (=nrepl-select=) and =api/cljs-eval=; the stdin path, =api
 
 =the-console-repl-evaluates-in-the-managed-runtime= now drives it: =api/repl= with =*in*= bound to one form and end of input, asserting the form's output and result. Without =:js-runtime= on the build it fails with "No available JS runtime".
 
-** TODO node-repl does not connect in the fork's dev server
+** DONE node-repl does not connect in the fork's dev server
+CLOSED: [2026-10-18 Sun 22:09]
 :PROPERTIES:
 :CREATED:  [2026-10-18 Sun 19:54]
 :ID:       20261018T195432.653208
 :END:
 
 In a dev server started as =clojure -M:start no-go= plus =server/start!=, =repl-impl/node-repl*= compiles and launches its process, under bun or node alike, but no runtime connects within 8 s. Not caused by the managed-runtime work; unexplained. The node-repl test therefore asserts only that no managed process is added. From [[my:agent-skills/docs/implementations/2026/2026-10/2026-10-06-spike-skill-implementation.org::#session-1][the spike skill's implementation record, session 1]].
+
+The process did launch: it exited with code 1 about every 135 ms and =node-repl*= restarted it, its stderr going only to the worker's output channel, which nothing tapped. Two causes:
+
+- *Bun — fixed.* The prelude =shadow.build.node= generates detected stdin code only by =__dirname == '.'=; bun reports the cwd there, so imports resolved against the cwd and failed with ENOENT. It now also accepts a =__filename= ending in =[stdin]=, and the node-repl test asserts the process connects and evaluates under bun.
+- *Node — environmental.* This checkout has no =node_modules=, so the node REPL client's =ws= import fails; bun ships its own =ws=. Installing the =package.json= dependencies should cure it.
 
 ** DONE The failed-compile test leaves shadow's trace uncaptured
 CLOSED: [2026-10-18 Sun 20:29]
