@@ -22,13 +22,16 @@ kiln uses the published =org.clojars.teehemkay/shadow-cljs= =3.4.11-bun= jar, so
 
 =shadow.cljs.managed-runtime-test=, =js-runtime-test= and =bun-runtime-test= live in =src/repl=, which =project.clj='s =:test-paths ["src/test"]= never runs, so CI does not cover them. They need a running server and bun, which is why the fork keeps them there; decide whether a CI job should run them. From [[my:agent-skills/docs/implementations/2026/2026-10/2026-10-06-spike-skill-implementation.org::#session-1][the spike skill's implementation record, session 1]].
 
-** TODO The console REPL's managed-runtime path has no test
+** DONE The console REPL's managed-runtime path has no test
+CLOSED: [2026-10-18 Sun 22:05]
 :PROPERTIES:
 :CREATED:  [2026-10-18 Sun 19:54]
 :ID:       20261018T195432.643690
 :END:
 
 The tests drive nREPL (=nrepl-select=) and =api/cljs-eval=; the stdin path, =api/repl= without nREPL into =repl-impl/stdin-takeover!=, is not driven, though it reaches the same =repl-impl/do-repl= code. From [[my:agent-skills/docs/implementations/2026/2026-10/2026-10-06-spike-skill-implementation.org::#session-1][the spike skill's implementation record, session 1]].
+
+=the-console-repl-evaluates-in-the-managed-runtime= now drives it: =api/repl= with =*in*= bound to one form and end of input, asserting the form's output and result. Without =:js-runtime= on the build it fails with "No available JS runtime".
 
 ** TODO node-repl does not connect in the fork's dev server
 :PROPERTIES:
