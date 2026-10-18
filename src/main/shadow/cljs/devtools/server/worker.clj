@@ -12,6 +12,7 @@
     [shadow.cljs :as-alias m]
     [shadow.cljs.devtools.server.system-bus :as sys-bus]
     [shadow.cljs.devtools.server.worker.impl :as impl]
+    [shadow.build.targets.shared :as target-shared]
     [shadow.cljs.devtools.server.util :as util]
     [shadow.cljs.devtools.server.fs-watch :as fs-watch]
     [shadow.cljs.devtools.server.reload-npm :as reload-npm]
@@ -70,6 +71,39 @@
   (let [reply-to (async/chan)]
     (>!! proc-control {:type :ensure-managed-runtime :reply-to reply-to})
     (<!! reply-to)))
+
+(def managed-runtime-connect-ms
+  "How long an eval waits for a managed JS runtime to connect. A cold bun
+  start loading a dev build takes about a second."
+  5000)
+
+(defn await-managed-runtime
+  "Starts the worker's managed JS runtime when none is connected and waits
+  up to timeout-ms for it. Returns :connected, :timeout, or :not-managed for
+  a build without :js-runtime. Polls :default-runtime-id, the field the REPL
+  picks its runtime from, so a :connected here is one the next pick finds."
+  [{:keys [state-ref] :as worker} timeout-ms]
+  {:pre [(impl/proc? worker)]}
+  (cond
+    (:default-runtime-id @state-ref)
+    :connected
+
+    (not (target-shared/managed-runtime? (:build-config @state-ref)))
+    :not-managed
+
+    :else
+    (do (ensure-managed-runtime worker)
+        (loop [deadline (+ (System/currentTimeMillis) timeout-ms)]
+          (cond
+            (:default-runtime-id @state-ref)
+            :connected
+
+            (> (System/currentTimeMillis) deadline)
+            :timeout
+
+            :else
+            (do (Thread/sleep 50)
+                (recur deadline)))))))
 
 (defn worker-request [{:keys [proc-stop proc-control state-ref] :as worker} request]
   {:pre [(impl/proc? worker)
