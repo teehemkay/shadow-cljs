@@ -317,6 +317,9 @@
         (is (some? (-> worker :state-ref deref :last-build-provides)))
         (is (false? (impl/managed-build? (-> worker :state-ref deref))))
         (is (nil? (managed-state build-id)) "no managed process")
+        (is (some? (await-runtime build-id 10000)) "its own process connects")
+        (is (= ["true"] (:results (api/cljs-eval build-id "(some? js/process.versions.bun)" {})))
+            "and evaluates under bun")
         (finally
           (api/stop-worker build-id))))))
 

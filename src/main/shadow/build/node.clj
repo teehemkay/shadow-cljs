@@ -142,8 +142,11 @@
 
                (str "var SHADOW_IMPORT_PATH = __dirname + '/" rel-path "';")
                ;; special case for node-repl which doesn't execute a file
-               ;; but instead executes the code via stdin pipe
-               (str "if (__dirname == '.') { SHADOW_IMPORT_PATH = "
+               ;; but instead executes the code via stdin pipe. node gives
+               ;; stdin code __dirname "." and __filename "[stdin]"; bun
+               ;; gives the cwd and "<cwd>/[stdin]", so its __dirname alone
+               ;; cannot tell
+               (str "if (__dirname == '.' || /\\[stdin\\]$/.test(__filename)) { SHADOW_IMPORT_PATH = "
                     (-> (data/output-file state cljs-runtime-path)
                         (.getAbsolutePath)
                         (pr-str))
