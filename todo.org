@@ -60,7 +60,8 @@ CLOSED: [2026-10-18 Sun 20:41]
 
 Both tests now run inside =capturing-launch-failures=, which puts a filter on =shadow.jvm-log/logger= that collects the build's launch-failure records and keeps them from the console. They assert one =WARNING= record carrying a =FileNotFoundException=. The filter matches the exact message =log/log-msg= builds, so every other record still prints.
 
-** TODO A stopped runtime's websocket throws an uncaught SocketException
+** DONE A stopped runtime's websocket throws an uncaught SocketException
+CLOSED: [2026-10-18 Sun 22:02]
 :PROPERTIES:
 :CREATED:  [2026-10-18 Sun 20:29]
 :ID:       20261018T202955.497866
@@ -73,7 +74,9 @@ A fourth run showed two other faces of the same send, at the same two points: =N
 Root cause: shadow-http's =CoreAsyncWebSocketHandler= write loop sends whatever it took from =ws-out= with no guard, so a message in flight when the peer dies throws on the closing connection, uncaught on its virtual thread. The fork's managed runtime makes that common by killing a runtime while messages to it are in flight. Two paths do it:
 
 - *Worker shutdown — fixed.* =do-shutdown= stopped the runtime before the worker left the relay, so the relay's worker-departure notice went to a dead runtime. The worker now leaves the relay first and waits for =connection-stop=; =the-worker-leaves-the-relay-before-its-runtime-stops= covers it.
-- *A build that stops being managed — open.* =build-compile*= queues =:cljs-build-complete= for the runtimes, then =start-managed-runtime-after-build= kills the runtime at once, before the message clears shadow-http's async hops. Still seen in two of three whole-namespace runs, in =a-build-that-stops-being-managed-loses-its-process=. A reorder cannot help, since the message precedes the kill; the complete fix is a guarded write loop in shadow-http, which is upstream's jar.
+- *A build that stops being managed — fixed.* =build-compile*= queues =:cljs-build-complete= for the runtimes, then =start-managed-runtime-after-build= kills the runtime at once, before the message clears shadow-http's async hops. A reorder cannot help, since the message precedes the kill.
+
+The fork now upgrades its relay websockets through =shadow.cljs.devtools.server.web.websocket=, a deliberate copy of upstream's handler whose write loop ends quietly when a send fails because the peer left, told apart from a live-connection fault by waiting for =onClose=. That covers both paths and any other kill-while-sending. Three whole-namespace runs afterwards carried none of the traces. Proposing the guarded loop to shadow-http upstream would let the copy go.
 
 ** TODO The default watch output can drop a build-failure report
 :PROPERTIES:
