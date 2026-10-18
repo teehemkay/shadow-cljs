@@ -59,14 +59,19 @@ Cursive), the console REPL or `shadow/cljs-eval`.
   a `--- bun runtime started ---` line, so a restart keeps the output of the
   crash that caused it; past 1 MB the log is set aside as `<log>.1`.
 - **An evaluation never starts it.** One that finds no runtime waits while one
-  may still come: up to 5 seconds from the process's start, while a restart is
-  due, or before the build's first compile. Otherwise it says at once why there
-  is none: the launch error, or the exit code with the end of the log. Because
-  the wait counts from the process's start, a region of forms pays it once.
+  may still come: before the build's first compile, within 5 seconds of a new
+  process's start, while a connected process reconnects, or while a restart is
+  due. Otherwise it says at once why there is none: the launch error, or the
+  exit code with the end of that run's output. Because a new process's window
+  counts from its start, a region of forms pays it once.
 - **A process that exits after connecting is restarted once per build**; one
   that exits before connecting waits for the next successful compile, so a
   `:main` that exits is not re-run in a loop.
-- **Changing the build's config replaces the process** on the next compile.
+- **A compile replaces a stale process**: one started from a different build
+  config, or one that never connected within its window. Without autobuild,
+  shadow-cljs keeps compiling from the old config after an edit, so the process
+  that matches it keeps running. A replaced process gets SIGTERM, then a forced
+  kill after 2 seconds.
 - **`node-repl` gets none**: it pipes in its own process.
 
 The managed process is stopped automatically when the worker shuts down.

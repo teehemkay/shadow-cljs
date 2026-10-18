@@ -67,9 +67,10 @@ The worker loop owns the process. Its state lives under `:managed-runtime`:
 ```clojure
 {:managed-runtime {:process    <java.lang.Process>
                    :log-file   <java.io.File>
-                   :started-at 1760000000000 ; anchors the REPL's connect wait
-                   :connected? true          ; set when a runtime connects while it is alive
-                   :restarts   0}}           ; renewed by each successful compile
+                   :config     {...}          ; the merged build config it was started from
+                   :started-at 1234567890     ; System/nanoTime; anchors the connect window
+                   :connected? true           ; set when a runtime connects while it is alive
+                   :restarts   0}}            ; renewed by each successful compile
 ;; or, when the launch threw:
 {:managed-runtime {:error "<exception message>" :restarts 0}}
 ```
@@ -83,16 +84,22 @@ The worker loop owns the process. Its state lives under `:managed-runtime`:
   `:js-runtime` that opts in, not its value: `:js-runtime :node` gets a managed
   `node` process the same way.
 - **`start-managed-runtime-after-build`** — called by `build-compile` after a
-  successful compile, outside the compile's `try`, so nothing in it can turn a
-  good compile into a reported failure: renews the restart allowance and starts
-  a process when the build is managed and none is alive.
+  successful compile (`:failure-data` absent, not merely nil: `build-failure`
+  stores `(ex-data e)`), outside the compile's `try` and inside its own `try`
+  that logs and keeps the compile, so nothing in it can turn a good compile
+  into a failure or roll it back. It replaces a stale process — one started
+  from a different config, or past its connect window without connecting —
+  renews the restart allowance, and starts a process when the build is managed
+  and none is alive. Without autobuild a config edit is only recorded and the
+  next compile still builds from the old config, so the matching process stays.
+- **`stop-managed-runtime`** — SIGTERM, then `destroyForcibly` after a 2 s
+  grace, since a `:main` may trap SIGTERM.
+  Also called from the worker's `:do-shutdown` closure in `worker.clj`.
 - **`start-managed-runtime`** — writes the bootstrap, spawns the process with
   `js-runtime-file-argv` and its output appended to the log file (after a run
   marker; a log past 1 MB is first set aside as `<log>.1`), and posts the
   process's exit back to the loop as `:managed-runtime-exited` with `put!`,
   never a blocking put. A launch that throws leaves `:error` instead.
-- **`do-config-watch`** — a changed build config stops the live process; the
-  next successful compile starts one from the new config.
 - **`:connected?` is an approximation**: any runtime connecting while the
   process is alive sets it, because the node client's hello carries no process
   identity. Adding the pid to `shadow.cljs.devtools.client.node`'s client info
@@ -100,8 +107,6 @@ The worker loop owns the process. Its state lives under `:managed-runtime`:
 - **`:managed-runtime-exited`** — restarts a process that had connected, once
   per build; one that never connected stays down until the next build, so a
   `:main` that exits is not re-run in a loop.
-- **`stop-managed-runtime`** — calls `.destroy` on the process and dissociates
-  the state. Called from the worker's `:do-shutdown` closure in `worker.clj`.
 
 ### The REPL side — `shadow.cljs.devtools.server.worker` and `repl-impl`
 
@@ -109,13 +114,15 @@ Every REPL frontend evaluates through `repl-impl/do-repl` (nREPL, stdin, prepl,
 `api/cljs-eval`), and none of them starts the process. When an eval finds no
 runtime, `worker/await-managed-runtime` reads the worker's state — never sending
 the loop a message, so it cannot block on a busy, stopped or failed worker, and
-is safe on the worker's own thread — and waits while one may still come: up to
-5 s from the process's `:started-at`, while a restart of a connected process is
-due, or before the first compile of a build configured with `:js-runtime`.
-Otherwise it returns why there is none (the launch error, or the exit code with
-the end of the log), which `do-repl` prints in place of the generic "No
-available JS runtime". Anchoring the wait to the process means a region of
-forms against a process that cannot connect pays it once, not once per form.
+is safe on the worker's own thread — and waits while one may still come:
+before the build's first compile, within 5 s of a new process's `:started-at`,
+while a connected process is alive (reconnecting), or while a restart of a
+connected process is due. Each eval's wait is also bounded by 5 s. Otherwise it
+returns why there is none (the launch error, or the exit code with the end of
+the current run's output, after the last run marker), which `do-repl` prints in
+place of the generic "No available JS runtime". Anchoring a new process's
+window to its start means a region of forms against one that cannot connect
+pays it once, not once per form.
 
 ### Standalone Node REPL — `shadow.cljs.devtools.server.repl-impl`
 

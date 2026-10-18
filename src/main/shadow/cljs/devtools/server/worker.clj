@@ -67,15 +67,10 @@
     (<!! chan))
   proc)
 
-(def managed-runtime-connect-ms
-  "How long an eval waits for a managed JS process that is alive but has
-  not connected yet. A cold bun start loading a dev build takes about a
-  second."
-  5000)
-
 (defn- log-tail
-  "The end of a managed runtime's log, ready to append to a message. Reads
-  only the last bytes: the log can be large."
+  "The end of the current run's output in a managed runtime's log, ready to
+  append to a message: only what follows the last run marker, and only the
+  last bytes, since the log keeps earlier runs and can be large."
   [^File log-file]
   (let [text (when (and log-file (.exists log-file))
                (with-open [raf (java.io.RandomAccessFile. log-file "r")]
@@ -84,74 +79,82 @@
                        buf (byte-array n)]
                    (.seek raf (- len n))
                    (.readFully raf buf)
-                   (str/trimr (String. buf java.nio.charset.StandardCharsets/UTF_8)))))]
+                   (let [window (String. buf java.nio.charset.StandardCharsets/UTF_8)
+                         suffix impl/managed-runtime-run-marker-suffix
+                         marker (str/last-index-of window suffix)]
+                     (str/trimr (cond-> window
+                                  marker (subs (+ marker (count suffix)))))))))]
     (if (str/blank? text)
-      "\n"
+      (str "; it printed nothing. Log: " (some-> log-file .getPath) "\n")
       (str "; its output ends:\n" text "\nFull output: " (.getPath log-file) "\n"))))
 
-(defn- may-become-managed?
-  "Before a build's first successful compile nothing can say whether it
-  will be managed; one configured with :js-runtime (in the build config or
-  the CLI's :config-merge) may be."
-  [{:keys [build-config cli-opts last-build-provides failure-data]}]
-  (and (nil? last-build-provides)
-       (nil? failure-data)
-       (not (:shadow.cljs.devtools.server.repl-impl/node-repl cli-opts))
-       (or (target-shared/managed-runtime? build-config)
-           (some :js-runtime (:config-merge cli-opts)))))
-
 (defn await-managed-runtime
-  "For an eval that found no runtime: waits while one may still come — the
-  build's managed process is alive and within timeout-ms of its start, a
-  restart of a process that had connected is due, or the build has not
-  compiled yet but may be managed — then says why there is none. Returns
-  nil when a runtime connected or the build has no managed process (the
-  REPL's generic message applies), else the message.
+  "For an eval that found no runtime: waits while one may still come, then
+  says why there is none. Returns nil when one connected or the build has
+  no managed process (the REPL's generic message applies), else the message.
 
-  The connect wait is anchored to the process's start, so a region of forms
-  against a process that cannot connect pays it once, not once per form.
+  It waits while:
+  - the build has not finished its first compile, until it can say;
+  - a new process is within its connect window, counted from its start, so
+    a region of forms against one that cannot connect pays it once;
+  - a process that had connected is alive, which means it is reconnecting;
+  - a process that had connected exited and the worker will restart it.
+  The last three are bounded by timeout-ms per eval as well.
+
   Reads only the worker's state and never asks its loop for anything, so it
   cannot block on a worker that is busy, stopped or failed to launch, and is
   safe on the worker's own thread (a build hook calling cljs-eval), where it
   waits out the timeout at worst. The worker starts the process
   (impl/start-managed-runtime-after-build); an eval never does."
-  [{:keys [state-ref build-id] :as worker} timeout-ms]
-  {:pre [(impl/proc? worker)]}
-  (let [eval-deadline (+ (System/currentTimeMillis) timeout-ms)
-        wait (fn [] (Thread/sleep 50) true)]
-    (loop []
-      (let [{:keys [default-runtime-id managed-runtime build-state build-config] :as state} @state-ref
-            {:keys [^Process process error connected? restarts started-at log-file]} managed-runtime
-            now (System/currentTimeMillis)
-            runtime (name (target-shared/js-runtime (or (:shadow.build/config build-state) build-config)))
-            alive? (and process (.isAlive process))]
-        (cond
-          default-runtime-id
-          nil
+  ([worker]
+   (await-managed-runtime worker impl/managed-runtime-connect-ms))
+  ([{:keys [state-ref build-id] :as worker} timeout-ms]
+   {:pre [(impl/proc? worker)]}
+   (let [timeout-ns (* timeout-ms 1000000)
+         eval-deadline (+ (System/nanoTime) timeout-ns)]
+     (loop []
+       (let [{:keys [default-runtime-id managed-runtime build-state build-config last-build-provides] :as state} @state-ref
+             {:keys [^Process process error connected? restarts started-at log-file]} managed-runtime
+             now (System/nanoTime)
+             in-time? (< now eval-deadline)
+             runtime (name (target-shared/js-runtime (or (:shadow.build/config build-state) build-config)))
+             alive? (boolean (and process (.isAlive process)))]
+         (cond
+           default-runtime-id
+           nil
 
-          (nil? managed-runtime)
-          (when (and (may-become-managed? state) (< now eval-deadline) (wait))
-            (recur))
+           (nil? managed-runtime)
+           (if (and in-time?
+                    (nil? last-build-provides)
+                    (not (contains? state :failure-data)))
+             (do (Thread/sleep 50) (recur))
+             nil)
 
-          error
-          (format "%s runtime for %s could not be launched: %s\n" runtime build-id error)
+           error
+           (format "%s runtime for %s could not be launched: %s\n" runtime build-id error)
 
-          (and alive? (< now (+ started-at timeout-ms)))
-          (do (wait) (recur))
+           (and alive? (not connected?) in-time? (< now (+ started-at timeout-ns)))
+           (do (Thread/sleep 50) (recur))
 
-          alive?
-          (format "%s runtime for %s did not connect within %d ms%s"
-            runtime build-id timeout-ms (log-tail log-file))
+           (and alive? (not connected?))
+           (format "%s runtime for %s did not connect within %d ms%s"
+             runtime build-id timeout-ms (log-tail log-file))
 
-          ;; exited after connecting; the worker restarts it once per build
-          (and connected? (zero? (or restarts 0)) (< now eval-deadline))
-          (do (wait) (recur))
+           (and alive? in-time?)
+           (do (Thread/sleep 50) (recur))
 
-          :else
-          (format "%s runtime for %s exited with code %d%s%s"
-            runtime build-id (.exitValue process)
-            (if connected? "" " before connecting")
-            (log-tail log-file)))))))
+           alive?
+           (format "%s runtime for %s lost its connection and did not reconnect within %d ms%s"
+             runtime build-id timeout-ms (log-tail log-file))
+
+           (and connected? (zero? (or restarts 0)) (impl/managed-build? state) in-time?)
+           (do (Thread/sleep 50) (recur))
+
+           :else
+           (format "%s runtime for %s exited with code %d%s%s"
+             runtime build-id (.exitValue process)
+             (if connected? "" " before connecting")
+             (log-tail log-file))))))))
 
 (defn worker-request [{:keys [proc-stop proc-control state-ref] :as worker} request]
   {:pre [(impl/proc? worker)

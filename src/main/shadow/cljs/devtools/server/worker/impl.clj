@@ -412,9 +412,15 @@
   compile into a reported build failure."
   [worker-state]
   (let [compiled (build-compile* worker-state)]
-    (if (:failure-data compiled)
+    ;; contains?, not the value: build-failure stores (ex-data e), which is
+    ;; nil for an exception that is not ex-info
+    (if (contains? compiled :failure-data)
       compiled
-      (start-managed-runtime-after-build compiled))))
+      (try
+        (start-managed-runtime-after-build compiled)
+        (catch Throwable t
+          (log/warn-ex t ::managed-runtime-lifecycle-failed {:build-id (:build-id compiled)})
+          compiled)))))
 
 ;; managed runtime lifecycle
 ;;
@@ -442,10 +448,21 @@
          (target-shared/managed-runtime? (::build/config build-state))
          (contains? last-build-provides 'shadow.cljs.devtools.client.node))))
 
-(defn stop-managed-runtime [{:keys [managed-runtime] :as worker-state}]
+(def managed-runtime-connect-ms
+  "How long a new managed process has to connect before the REPL reports it
+  and the next compile replaces it. A cold bun start loading a dev build
+  takes about a second."
+  5000)
+
+(defn stop-managed-runtime
+  "Stops the process, forcibly when it outlives a grace period (a :main may
+  trap SIGTERM), so a replaced process cannot keep serving the REPL."
+  [{:keys [managed-runtime] :as worker-state}]
   ;; a failed launch leaves :error and no :process
   (when-let [^Process process (:process managed-runtime)]
-    (.destroy process))
+    (.destroy process)
+    (when-not (.waitFor process 2 java.util.concurrent.TimeUnit/SECONDS)
+      (.destroyForcibly process)))
   (dissoc worker-state :managed-runtime))
 
 (defn managed-runtime-running? [{:keys [managed-runtime]}]
@@ -457,6 +474,11 @@
   it cannot grow without bound across restarts."
   (* 1024 1024))
 
+(def managed-runtime-run-marker-suffix
+  "Ends the line written before each run in a managed runtime's log; the
+  REPL quotes only what follows the last one (worker/log-tail)."
+  " runtime started ---\n")
+
 (defn- open-managed-runtime-log
   "The log a starting process appends to: a run marker after any earlier
   run's output, which a restart keeps, so the crash that caused it stays
@@ -464,8 +486,14 @@
   [^File log-file js-runtime-name]
   (io/make-parents log-file)
   (when (> (.length log-file) managed-runtime-log-limit)
-    (.renameTo log-file (io/file (str (.getPath log-file) ".1"))))
-  (spit log-file (str "--- " js-runtime-name " runtime started ---\n") :append true)
+    (try
+      (java.nio.file.Files/move (.toPath log-file)
+        (.toPath (io/file (str (.getPath log-file) ".1")))
+        (into-array java.nio.file.CopyOption [java.nio.file.StandardCopyOption/REPLACE_EXISTING]))
+      (catch Exception e
+        ;; keep appending rather than fail the start
+        (log/debug-ex e ::managed-runtime-log-rotate-failed {:log-file log-file}))))
+  (spit log-file (str "--- " js-runtime-name managed-runtime-run-marker-suffix) :append true)
   log-file)
 
 (defn start-managed-runtime
@@ -512,8 +540,10 @@
           :managed-runtime
           {:process process
            :log-file log-file
-           ;; anchors the REPL's connect wait to the process, not to each eval
-           :started-at (System/currentTimeMillis)
+           ;; what the next compile compares to replace a stale process
+           :config config
+           ;; System/nanoTime, so a clock step cannot stretch the connect window
+           :started-at (System/nanoTime)
            :restarts restarts}))
       (catch Exception e
         (log/debug-ex e ::managed-runtime-launch-failed {:build-id build-id})
@@ -523,17 +553,33 @@
           {:error (str e)
            :restarts restarts})))))
 
-(defn start-managed-runtime-after-build
-  "After a successful compile: a managed build without a live process gets
-  one. Each build also renews the one restart a connected process gets."
-  [worker-state]
-  (cond-> worker-state
-    (:managed-runtime worker-state)
-    (assoc-in [:managed-runtime :restarts] 0)
+(defn- stale-managed-runtime?
+  "A live process the compile should replace: started from another config
+  (a config edit, with or without autobuild), or past its connect window
+  without ever connecting (a blocked event loop, a client that gave up)."
+  [{:keys [managed-runtime build-state] :as worker-state}]
+  (let [{:keys [config connected? started-at]} managed-runtime]
+    (and (managed-runtime-running? worker-state)
+         (or (not= config (::build/config build-state))
+             (and (not connected?)
+                  (> (- (System/nanoTime) started-at)
+                     (* managed-runtime-connect-ms 1000000)))))))
 
-    (and (managed-build? worker-state)
-         (not (managed-runtime-running? worker-state)))
-    (start-managed-runtime)))
+(defn start-managed-runtime-after-build
+  "After a successful compile: a managed build without a live process, or
+  with a stale one, gets a new one. Each build also renews the one restart
+  a connected process gets."
+  [worker-state]
+  (let [worker-state (cond-> worker-state
+                       (stale-managed-runtime? worker-state)
+                       (stop-managed-runtime)
+
+                       (:managed-runtime worker-state)
+                       (assoc-in [:managed-runtime :restarts] 0))]
+    (cond-> worker-state
+      (and (managed-build? worker-state)
+           (not (managed-runtime-running? worker-state)))
+      (start-managed-runtime))))
 
 (defn mark-managed-runtime-connected
   "Notes that the managed process connected, which is what earns it a
@@ -727,11 +773,6 @@
 (defn do-config-watch
   [{:keys [autobuild] :as worker-state} {:keys [config] :as msg}]
   (-> worker-state
-      ;; a process built from the old config would keep serving the REPL;
-      ;; the next successful compile starts one from the new config
-      (cond->
-        (not= config (:build-config worker-state))
-        (stop-managed-runtime))
       (assoc :build-config config)
       (cond->
         autobuild

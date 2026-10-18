@@ -144,7 +144,7 @@
                            no-runtime-reason
                            (when-not (or (:runtime-id repl-state)
                                          (-> worker :state-ref deref :default-runtime-id))
-                             (worker/await-managed-runtime worker worker/managed-runtime-connect-ms))
+                             (worker/await-managed-runtime worker))
 
                            runtime-id
                            (or (:runtime-id repl-state)
