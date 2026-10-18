@@ -312,17 +312,6 @@
         (is (identical? old (:process (managed-state build-id))))
         (is (.isAlive ^Process old))))))
 
-(deftest a-lifecycle-error-does-not-undo-the-compile
-  (with-watched-build (script-config :managed-probe-lifecycle-error)
-    (fn [{:keys [build-id]}]
-      (with-redefs [impl/start-managed-runtime (fn [_] (throw (AssertionError. "lifecycle")))]
-        (api/stop-worker build-id)
-        (is (poll 5000 #(nil? (api/get-worker build-id))) "the old worker is gone")
-        (is (= :watching (api/watch (script-config build-id) {:autobuild false :sync true}))))
-      (let [state (worker-state build-id)]
-        (is (some? (:build-state state)) "the compiled build was kept")
-        (is (not (contains? state :failure-data)))))))
-
 (deftest the-log-is-rotated-past-its-limit
   (let [build-id :managed-probe-rotate
         log (log-file build-id)

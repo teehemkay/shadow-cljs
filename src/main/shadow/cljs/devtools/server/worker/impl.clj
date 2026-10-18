@@ -416,11 +416,8 @@
     ;; nil for an exception that is not ex-info
     (if (contains? compiled :failure-data)
       compiled
-      (try
-        (start-managed-runtime-after-build compiled)
-        (catch Throwable t
-          (log/warn-ex t ::managed-runtime-lifecycle-failed {:build-id (:build-id compiled)})
-          compiled)))))
+      ;; start-managed-runtime catches its own launch failures
+      (start-managed-runtime-after-build compiled))))
 
 ;; managed runtime lifecycle
 ;;

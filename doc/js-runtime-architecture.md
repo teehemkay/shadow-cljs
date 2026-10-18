@@ -86,9 +86,9 @@ longer managed loses its. Its state lives under `:managed-runtime`:
   gets a managed `node` process the same way.
 - **`start-managed-runtime-after-build`** — called by `build-compile` after a
   successful compile (`:failure-data` absent, not merely nil: `build-failure`
-  stores `(ex-data e)`), outside the compile's `try` and inside its own `try`
-  that logs and keeps the compile, so nothing in it can turn a good compile
-  into a failure or roll it back. Not managed: stop and clear. Managed with a
+  stores `(ex-data e)`), outside the compile's `try`, so nothing in it can
+  turn a good compile into a reported failure; `start-managed-runtime` catches
+  its own launch failures. Not managed: stop and clear. Managed with a
   live process: nothing. Otherwise: start one.
 - **`start-managed-runtime`** — writes the bootstrap and spawns the process
   with `js-runtime-file-argv`, its output appended to the log file after a run
