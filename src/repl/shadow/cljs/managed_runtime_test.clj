@@ -19,6 +19,7 @@
     [shadow.cljs.devtools.server.js-runtime :as js-runtime]
     [shadow.cljs.devtools.server.repl-impl :as repl-impl]
     [shadow.cljs.devtools.server.runtime :as runtime]
+    [shadow.cljs.devtools.server.util :as util]
     [shadow.cljs.devtools.server.worker.impl :as impl]
     [shadow.cljs.test-util :refer [bun-available?]]))
 
@@ -96,16 +97,19 @@
   [build-id config]
   (async/>!! (-> (worker-state build-id) :channels :config-watch) {:config config}))
 
-(defn- collect-output
-  "A :log-chan for api/watch that keeps the worker's output messages in the
-  atom OUTPUT instead of printing them, so a test can check an expected
-  failure report rather than dump it. Drained continuously: the worker's
-  output mult waits on every tap."
-  [output]
+(defn- collect-failures
+  "A :log-chan for api/watch that keeps the worker's build-failure messages
+  in the atom FAILURES, so a test can check an expected failure report
+  rather than dump it. Every other message is printed as api/watch's own
+  dump would, so unexpected output still shows. Drained continuously: the
+  worker's output mult waits on every tap."
+  [failures]
   (let [ch (async/chan)]
     (async/go-loop []
       (when-some [x (async/<! ch)]
-        (swap! output conj x)
+        (if (= :build-failure (:type x))
+          (swap! failures conj x)
+          (util/print-worker-out x false))
         (recur)))
     ch))
 
@@ -140,7 +144,9 @@
   ([{:keys [build-id] :as config} cli-opts f]
    (when-bun
      (fn []
-       (api/watch config (merge {:autobuild false :sync true} cli-opts))
+       ;; a worker left by an aborted run would ignore CLI-OPTS
+       (assert (= :watching (api/watch config (merge {:autobuild false :sync true} cli-opts)))
+               (str build-id " is already being watched"))
        (try
          (f config)
          (finally
@@ -312,9 +318,9 @@
 (deftest a-failed-compile-leaves-the-process-alone
   ;; build-failure stores (ex-data e), nil for a plain exception; the
   ;; failure still has to count as one.
-  (let [output (atom [])]
+  (let [failures (atom [])]
     (with-watched-build (script-config :managed-probe-failed-compile)
-      {:autobuild true :log-chan (collect-output output)}
+      {:autobuild true :log-chan (collect-failures failures)}
       (fn [{:keys [build-id] :as config}]
         (is (some? (await-runtime build-id 10000)))
         (let [old (:process (managed-state build-id))]
@@ -323,10 +329,8 @@
           (send-config! build-id (assoc config :output-to "target/managed-probe-blocked/not-a-dir/script.js"))
           (is (poll 15000 #(contains? (worker-state build-id) :failure-data))
               "the autobuild compile failed")
-          (is (poll 5000 #(some (fn [{:keys [type report]}]
-                                  (and (= :build-failure type)
-                                       (str/includes? report "not-a-dir/script.js")))
-                                @output))
+          (is (poll 5000 #(some (fn [{:keys [report]}] (str/includes? report "not-a-dir"))
+                                @failures))
               "the failure report names the blocked output")
           (is (identical? old (:process (managed-state build-id))))
           (is (.isAlive ^Process old)))))))

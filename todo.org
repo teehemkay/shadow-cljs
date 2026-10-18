@@ -63,7 +63,15 @@ The trace was shadow's own =Build failure:= report, printed by =util/stdout-dump
 :ID:       20261018T202955.497866
 :END:
 
-In one of two whole-namespace runs of =shadow.cljs.managed-runtime-test=, after =cljs-eval-evaluates-in-the-managed-runtime= and during =a-build-that-stops-being-managed-loses-its-process=, the log carried =Exception in thread "" java.net.SocketException: Socket closed= from =shadow.http.server.WebSocketExchange/sendFrame=, called from =CoreAsyncWebSocketHandler= on a virtual thread. The server writes a frame after the managed bun process's socket has closed. All tests passed both times; the trace is unasserted output and its root cause is unexamined.
+In two of three whole-namespace runs of =shadow.cljs.managed-runtime-test=, after =cljs-eval-evaluates-in-the-managed-runtime= and during =a-build-that-stops-being-managed-loses-its-process=, the log carried =Exception in thread "" java.net.SocketException: Socket closed= from =shadow.http.server.WebSocketExchange/sendFrame=, called from =CoreAsyncWebSocketHandler= on a virtual thread. The server writes a frame after the managed bun process's socket has closed. All tests passed every time; the trace is unasserted output and its root cause is unexamined.
+
+** TODO The default watch output can drop a build-failure report
+:PROPERTIES:
+:CREATED:  [2026-10-18 Sun 20:37]
+:ID:       20261018T203700.701114
+:END:
+
+=util/stdout-dump=, the printer =api/watch= uses when no =:log-chan= is given, reads through a one-slot sliding buffer, so a message arriving before its go-loop takes the previous one replaces it. [[id:20261018T195432.663061][The failed-compile test]] lost its =Build failure:= report that way whenever the worker's shutdown notice followed closely. A REPL user watching a build could lose a real failure report the same way. Upstream shadow-cljs behaviour; decide whether the fork should change it. Raised by a code review of =wip/managed-runtime-follow-ups=.
 
 ** TODO The managed runtime's two known limitations
 :PROPERTIES:
