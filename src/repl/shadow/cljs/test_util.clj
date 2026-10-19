@@ -28,11 +28,19 @@
       (throw (ex-info (str program " is on PATH but does not run")
                {:program program :exit exit :err err})))))
 
+(defn- probe
+  "A function answering (program-available? PROGRAM), asked once and kept.
+  A throw is not kept, so the next call asks again: a delay was rejected
+  because it caches its body's exception, and one refused exec would then
+  fail every later run in a long-lived JVM."
+  [program]
+  (memoize #(program-available? program)))
+
 (def ^:private bun-probe
-  (delay (program-available? "bun")))
+  (probe "bun"))
 
 (defn bun-available?
   "True when bun runs from the JVM's PATH; the Bun-backed tests pass
   vacuously without it. Probed once per JVM."
   []
-  @bun-probe)
+  (bun-probe))
