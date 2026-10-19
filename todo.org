@@ -174,3 +174,11 @@ Two limits of shadow-http itself, which the fork cannot reach through =WebSocket
 - *The reader answers a close it initiated.* =WebSocketExchange.process= calls =sendClose= on every close frame it reads, so the peer's reply to a server close gets a second close frame, which RFC 6455 section 5.5.1 does not ask for. Follows [[id:20261019T072556.442785][the guarded handler's remaining gaps]].
 
 Split out of [[id:20261018T195432.416080][the managed-runtime follow-ups]], so that umbrella can close once the fork is released.
+
+* TODO Sync the fork to upstream 3.5.7
+:PROPERTIES:
+:CREATED:  [2026-10-19 Mon 13:11]
+:ID:       20261019T131148.547575
+:END:
+
+Upstream =thheller/shadow-cljs= is 42 commits ahead of the fork's =3.4.11= base, up to =bump 3.5.7=. Those commits touch the managed runtime's own files, so expect conflicts in =worker.clj=, =worker/impl.clj=, =relay/local.clj= and =devtools/api.clj=. No dashboard source changed, so no UI rebuild is needed. Follow [[my:shadow-cljs/docs/clojars-publishing.org::*Syncing to a new upstream version][the publishing doc's sync procedure]], let CI check the merge, then release =3.5.7-bun=.
