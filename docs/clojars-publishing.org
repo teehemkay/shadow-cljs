@@ -81,6 +81,17 @@ Upstream =thheller/shadow-cljs= ships frequently; this fork periodically catches
    lein test     # expect the js-runtime / cli-opts tests green among the rest
    #+end_src
 
+   =lein test= covers =src/test= only. The fork's managed-runtime suites live in =src/repl= and need a running shadow-cljs server and bun, which =shadow.cljs.server-test-runner= provides. They are the suites most exposed to upstream's worker changes, so run them as CI's =repl-tests= job does (=.github/workflows/ci.yml=); ~REQUIRE_BUN=1~ makes a missing bun fail the run rather than skip every bun test:
+
+   #+begin_src sh
+   REQUIRE_BUN=1 lein with-profile +repl-tests run -m shadow.cljs.server-test-runner \
+     shadow.cljs.managed-runtime-test \
+     shadow.cljs.js-runtime-test \
+     shadow.cljs.bun-runtime-test \
+     shadow.cljs.test-util-test \
+     shadow.cljs.server-test-runner-test
+   #+end_src
+
    Green tests do not cover behaviour changes in upstream's public API, so skim =git diff $(git merge-base master upstream/master) upstream/master -- src/main/shadow/cljs/devtools/api.clj= for changed return values and carry each into the release notes. The 3.5.7 sync found one: under a running watch, =api/compile= returns =:ok= or =:error= rather than =:done=, which upstream's changelog does not mention.
 
 6. Commit the merge, recording in the message what conflicted and how it was resolved — future syncs read it.
