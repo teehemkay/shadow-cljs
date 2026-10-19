@@ -1,0 +1,58 @@
+# The fork's own CI. Upstream's .circleci/config.yml stays untouched and
+# does not run here: CircleCI is not set up for this repository.
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  lein-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: DeLaGuardo/setup-clojure@13
+        with:
+          lein: latest
+      - uses: actions/cache@v6
+        with:
+          path: ~/.m2/repository
+          key: m2-${{ hashFiles('project.clj') }}
+          restore-keys: m2-
+      - run: lein test
+
+  # src/repl holds the fork's managed-runtime suites, which need a running
+  # shadow-cljs server and bun, so lein test (src/test only) never runs them.
+  repl-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: DeLaGuardo/setup-clojure@13
+        with:
+          lein: latest
+          cli: latest
+      - uses: oven-sh/setup-bun@v2
+      - uses: actions/cache@v6
+        with:
+          path: ~/.m2/repository
+          key: m2-repl-${{ hashFiles('project.clj', 'deps.edn') }}
+          restore-keys: m2-repl-
+      # deps.edn puts target/classes on the classpath; lein compiles it
+      - run: lein javac
+      - run: >-
+          clojure -M -m shadow.cljs.server-test-runner
+          shadow.cljs.managed-runtime-test
+          shadow.cljs.js-runtime-test
+          shadow.cljs.bun-runtime-test
+          shadow.cljs.test-util-test
