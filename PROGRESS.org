@@ -6,12 +6,12 @@ This is the live status of the Bun fork of shadow-cljs, published as =org.clojar
 
 *Keep this document current.* Whenever an effort changes status, update the status board and that effort's section in the same change that does the work.
 
-Last updated: [2026-10-19 Mon 12:12] — The relay websocket now closes whenever its write loop ends, and the watch printer no longer drops failure reports; both are merged into =master= and pushed, and every suite is green. The fixes reach kiln only through a release, so the next step is tmk's call on cutting a new =-bun= version, or setting up CI first.
+Last updated: [2026-10-19 Mon 12:37] — The fork now has CI on GitHub Actions, green on =master=, and the README discloses that the fork is heavily AI-assisted. The only item left under the managed-runtime follow-ups is the release that gets kiln these fixes; that is tmk's call.
 
 * Where we are in the chain
 
 - *Managed-runtime follow-ups:* finished (merged), the websocket gaps and the watch printer included. What remains is the release, CI, and upstream work.
-- *Next ritual:* a release, per [[my:shadow-cljs/docs/clojars-publishing.org][the Clojars publishing doc]], once tmk decides to cut one.
+- *Next ritual:* a release, per [[my:shadow-cljs/docs/clojars-publishing.org][the Clojars publishing doc]], once tmk decides to cut one. Releasing closes the follow-ups umbrella in todo.org.
 
 * Status board
 
@@ -24,7 +24,8 @@ Legend: *DONE* shipped · *IN PROGRESS* actively building · *PAUSED* set aside 
 | Worker-owned managed runtime            | *DONE*      | Every eval path, CIDER included, evaluates in the worker's Bun process |
 | Managed-runtime follow-ups              | *DONE*      | Quiet tests, guarded websocket, node-repl under bun, three reviews      |
 | Release the fork for kiln               | *PENDING*   | kiln still uses =3.4.11-bun= without the managed-runtime fix            |
-| CI for the =src/repl= tests             | *PENDING*   | Need a running server and bun; =lein test= skips them                   |
+| Fork CI on GitHub Actions               | *DONE*      | =lein test= plus the bun-backed =src/repl= suites, on every push        |
+| README AI-assistance disclaimer         | *DONE*      | Highlighted notice above the fork notice                                |
 | Relay websocket closes on loop end      | *DONE*      | No client left connected but deaf; faults logged; access-denied closes  |
 | Watch printer keeps failure reports     | *DONE*      | 1024-slot printer, ignored events filtered, dead printer lets go        |
 | Offer the handler to shadow-http        | *DEFERRED*  | Would retire the fork's copy; two shadow-http close limits to raise     |
@@ -68,15 +69,17 @@ This section says the same thing as the rest of the document for a reader who do
 *Takeaway:* tmk's call; the procedure is in [[my:shadow-cljs/docs/clojars-publishing.org][the Clojars publishing doc]].
 - Until a release, a CIDER session on kiln's =:dev= build needs =(shadow.cljs.devtools.api/repl :dev)= once to start Bun.
 
-** CI for the =src/repl= tests — PENDING
+** Fork CI on GitHub Actions — DONE
 
-*Takeaway:* decide whether a CI job should run =shadow.cljs.managed-runtime-test= and its siblings.
-- They need a running shadow-cljs server and bun; locally they run through a scratch runner that starts the server.
+*Takeaway:* merged on [2026-10-19 Mon]; two jobs run on every push and pull request, both green.
+- =lein-test= runs =lein test=.
+- =repl-tests= runs the managed-runtime, js-runtime, bun-runtime, test-util and runner suites through =shadow.cljs.server-test-runner=, on lein's =:repl-tests= profile so it tests the release's dependencies rather than =deps.edn='s drifted ones.
+- =REQUIRE_BUN= makes a runner without bun fail instead of passing the bun tests vacuously.
 
 * Deferred & parked
 
 - *Offer the guarded handler to shadow-http* — an IDEA in todo.org; it also carries the two close limits the fork cannot reach.
-- *The managed runtime's two known limitations* — rare; revisit if seen.
+- *The managed runtime's two known limitations* — now a top-level todo.org item; rare, revisit if seen.
 
 * Where things live
 
