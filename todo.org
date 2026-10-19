@@ -122,7 +122,7 @@ Fixed by one rule: the websocket closes whenever its write loop ends. The loop r
 - *Output closed by its owner:* =ws-out= closing gets a normal close (1000). This also disconnects every client the relay drops (ping timeout, =client-not-keeping-up=, a bad =:hello=, server stop), which upstream left connected but deaf.
 - *A fault:* a logged =send-failed= warning, =ws-in= closed so the relay drops the client, and an internal-error close (1011).
 
-The access-denied upgrade closes =ws-out= after its message and starts with =ws-in= closed. The blocked reader is left as is, since =onText='s backpressure is upstream's design; that case now ends in one logged warning and a clean disconnect. Upstreaming stays open as a separate idea.
+The access-denied upgrade closes =ws-out= after its message and starts with =ws-in= closed. The blocked reader keeps =onText='s backpressure, which is upstream's design. Closing =ws-in= alone does not release a put already waiting on it, so ending the connection also drains =ws-in=, and the reader goes on to read the peer's close reply. Upstreaming stays open as a separate idea.
 
 ** IDEA Offer the guarded websocket handler to shadow-http upstream
 :PROPERTIES:
@@ -130,7 +130,12 @@ The access-denied upgrade closes =ws-out= after its message and starts with =ws-
 :ID:       20261019T105108.243880
 :END:
 
-=shadow.cljs.devtools.server.web.websocket= is a deliberate copy of shadow-http's =CoreAsyncWebSocketHandler= that differs only in its write loop and how the loop's end closes the connection. Upstream taking both would fix every =ws-upgrade= caller and let the fork drop the copy. Follows [[id:20261019T072556.442785][the guarded handler's remaining gaps]].
+=shadow.cljs.devtools.server.web.websocket= is a deliberate copy of shadow-http's =CoreAsyncWebSocketHandler= that differs only in its write loop and how the loop's end closes the connection. Upstream taking both would fix every =ws-upgrade= caller and let the fork drop the copy.
+
+Two limits of shadow-http itself, which the fork cannot reach through =WebSocketConnection=, belong in the same conversation:
+
+- *A peer that never answers a server close keeps its socket.* =sendClose= only marks the exchange closed; the reader waits for the peer's reply with no timeout, and the interface has no way to drop the socket.
+- *The reader answers a close it initiated.* =WebSocketExchange.process= calls =sendClose= on every close frame it reads, so the peer's reply to a server close gets a second close frame, which RFC 6455 section 5.5.1 does not ask for. Follows [[id:20261019T072556.442785][the guarded handler's remaining gaps]].
 
 ** DONE The default watch output can drop a build-failure report
 CLOSED: [2026-10-19 Mon 11:55]
