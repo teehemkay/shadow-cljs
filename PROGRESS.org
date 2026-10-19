@@ -6,12 +6,12 @@ This is the live status of the Bun fork of shadow-cljs, published as =org.clojar
 
 *Keep this document current.* Whenever an effort changes status, update the status board and that effort's section in the same change that does the work.
 
-Last updated: [2026-10-19 Mon 14:05] — =master= is synced to upstream 3.5.7 and CI is green on it. Next: release =3.5.7-bun=, then move kiln's =deps.edn= to it.
+Last updated: [2026-10-19 Mon 15:30] — =3.5.7-bun= is live on Clojars, carrying the upstream 3.5.7 sync. Next: move kiln's =deps.edn= to it.
 
 * Where we are in the chain
 
-- *Upstream 3.5.7 sync:* merged to =master= and CI-green. What remains is the release and the consumers picking it up.
-- *Released:* =3.4.11-bun.2= is the latest on Clojars; kiln still pins =3.4.11-bun= and can go straight to =3.5.7-bun=.
+- *Upstream 3.5.7 sync:* finished and released as =3.5.7-bun=.
+- *Consumers:* kiln still pins =3.4.11-bun= and can go straight to =3.5.7-bun=.
 
 * Status board
 
@@ -19,8 +19,8 @@ Legend: *DONE* shipped · *IN PROGRESS* actively building · *PAUSED* set aside 
 
 | Effort                           | Status        | One-line                                                          |
 |----------------------------------+---------------+-------------------------------------------------------------------|
-| Sync to upstream 3.5.7           | *IN PROGRESS* | Merged and CI-green; release =3.5.7-bun= is next                  |
-| kiln on the fork's latest        | *PENDING*     | kiln pins =3.4.11-bun=; move it once =3.5.7-bun= is out           |
+| Sync to upstream 3.5.7           | *DONE*        | Released as =3.5.7-bun=; two conflicts, CI green                  |
+| kiln on the fork's latest        | *PENDING*     | kiln pins =3.4.11-bun=; move it to =3.5.7-bun=                    |
 | Runtime's two known limitations  | *DEFERRED*    | Orphaned process on a throwing step; exit 143 on a stopped worker |
 | Offer the handler to shadow-http | *DEFERRED*    | Would retire the fork's copy; two shadow-http close limits        |
 
@@ -37,13 +37,13 @@ This section says the same thing as the rest of the document for a reader who do
 - Worker :: shadow-cljs's per-build process that compiles and owns that runtime.
 - Upstream sync :: merging the original project's newer releases into the fork.
 
-*Where we are right now.* The fork has caught up with the original project's newest version and every test passes. It reaches the projects that use it once a new version is published.
+*Where we are right now.* The fork has caught up with the original project's newest version and is published. The project that depends on it, kiln, gets the update once it switches to the new version.
 
 * Detailed status
 
-** Sync to upstream 3.5.7 — IN PROGRESS
+** Sync to upstream 3.5.7 — DONE
 
-*Takeaway:* merged to =master= on [2026-10-19 Mon] and green in CI; next is releasing =3.5.7-bun=.
+*Takeaway:* merged to =master= and released as =3.5.7-bun= on [2026-10-19 Mon], CI green on both jobs.
 - 42 upstream commits; only =project.clj= and =server/worker.clj= conflicted. The merge commit records each resolution.
 - Upstream reshaped the worker's =:failure-data=; the fork's check still holds, and its comment was corrected.
 - shadow-http 0.1.8 → 0.1.11 left the WebSocket classes untouched, so the fork's copied handler stays valid. No dashboard source changed, so no UI rebuild.
@@ -52,7 +52,7 @@ This section says the same thing as the rest of the document for a reader who do
 
 ** kiln on the fork's latest — PENDING
 
-*Takeaway:* kiln's =deps.edn= pins =3.4.11-bun=; once =3.5.7-bun= is on Clojars, move it there and run kiln's build and tests.
+*Takeaway:* kiln's =deps.edn= pins =3.4.11-bun=; move it to =3.5.7-bun= and run kiln's build and tests. Tracked in todo.org.
 
 * Deferred & parked
 
