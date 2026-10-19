@@ -138,6 +138,14 @@
            (format "%s runtime for %s is running but not connected (it gets %d ms to connect after it starts)%s"
              runtime build-id timeout-ms (log-tail log-file))))))))
 
+(defn grab-state!
+  "grabs the latest build-state, ensuring that all previous proc-control commmands completed"
+  [{:keys [proc-control] :as proc}]
+  {:pre [(impl/proc? proc)]}
+  (let [chan (async/chan)]
+    (>!! proc-control {:type :grab-state! :chan chan})
+    (<!! chan)))
+
 (defn worker-request [{:keys [proc-stop proc-control state-ref] :as worker} request]
   {:pre [(impl/proc? worker)
          (map? request)

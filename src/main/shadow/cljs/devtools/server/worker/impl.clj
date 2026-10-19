@@ -138,7 +138,7 @@
           ;; to ensure that all state is in proper order in the next compile and does not
           ;; contain remnants of the failed compile
           ;; FIXME: should probably check ex-data :tag
-          (assoc :failure-data data)
+          (assoc :failure-data {:ex e :report error-report})
           (cond->
             (= tag :shadow.build.resolve/missing-js)
             (init-package-json-watch data)
@@ -412,8 +412,8 @@
   compile into a reported build failure."
   [worker-state]
   (let [compiled (build-compile* worker-state)]
-    ;; contains?, not the value: build-failure stores (ex-data e), which is
-    ;; nil for an exception that is not ex-info
+    ;; build-failure marks a failed compile by storing :failure-data, and
+    ;; build-compile* clears it on success
     (if (contains? compiled :failure-data)
       compiled
       ;; start-managed-runtime catches its own launch failures
@@ -554,6 +554,12 @@
 
 (defmethod do-proc-control :sync!
   [worker-state {:keys [chan] :as msg}]
+  (async/close! chan)
+  worker-state)
+
+(defmethod do-proc-control :grab-state!
+  [worker-state {:keys [chan] :as msg}]
+  (async/>!! chan (select-keys worker-state [:build-state :failure-data]))
   (async/close! chan)
   worker-state)
 

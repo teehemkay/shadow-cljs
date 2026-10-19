@@ -1,5 +1,47 @@
 # Changelog
 
+## [3.5.7](https://github.com/thheller/shadow-cljs/compare/380876b09f7c7a7e6b4f3c5b6ff1754194a35be8...380876b09f7c7a7e6b4f3c5b6ff1754194a35be8) - 2026-10-12
+- [ [`38087`](https://github.com/thheller/shadow-cljs/commit/380876b09f7c7a7e6b4f3c5b6ff1754194a35be8) ] emit configurable export descriptors for dev builds (#1283)
+
+## [3.5.6](https://github.com/thheller/shadow-cljs/compare/45ef1747cebcab7a65cdfdacaf7d14de6b5ada61...69cbfb5443804c98c29ff2603e12be0de704a6fe) - 2026-10-12
+- [ [`69cbf`](https://github.com/thheller/shadow-cljs/commit/69cbfb5443804c98c29ff2603e12be0de704a6fe) ] port fix for CLJS-3382
+- [ [`7ea72`](https://github.com/thheller/shadow-cljs/commit/7ea726c4194f76b2bc7089caaa35bdbc41e996bb) ] disable cljs specs for now
+- [ [`45ef1`](https://github.com/thheller/shadow-cljs/commit/45ef1747cebcab7a65cdfdacaf7d14de6b5ada61) ] fix file exts
+
+## [3.5.5](https://github.com/thheller/shadow-cljs/compare/ea3eb72e58966dd1eab025cfe2adaeb36d3581be...ea3eb72e58966dd1eab025cfe2adaeb36d3581be) - 2026-10-04
+- [ [`ea3eb`](https://github.com/thheller/shadow-cljs/commit/ea3eb72e58966dd1eab025cfe2adaeb36d3581be) ] fix require ordering cache problem
+
+## [3.5.4](https://github.com/thheller/shadow-cljs/compare/1cb149dbf0ce34137fbb1ee657b258d729ffa70d...4b0d00b036ea41c8878985d788efb54991e0f0ae) - 2026-10-01
+- [ [`4b0d0`](https://github.com/thheller/shadow-cljs/commit/4b0d00b036ea41c8878985d788efb54991e0f0ae) ] slightly improve compile trigger api
+- [ [`1cb14`](https://github.com/thheller/shadow-cljs/commit/1cb149dbf0ce34137fbb1ee657b258d729ffa70d) ] fix :single-file source maps
+
+## [3.5.3](https://github.com/thheller/shadow-cljs/compare/b497cbf9ce020f93dbbe0fea8e98b07034186e83...b497cbf9ce020f93dbbe0fea8e98b07034186e83) - 2026-09-16
+- [ [`b497c`](https://github.com/thheller/shadow-cljs/commit/b497cbf9ce020f93dbbe0fea8e98b07034186e83) ] shadow-http bump
+
+## [3.5.2](https://github.com/thheller/shadow-cljs/compare/fbaf43d5f4c9b47b3f62ba984fe3dc0843c3b5e1...f27b7bb896bc089c35a6cc17723678c7ba53c2a6) - 2026-09-15
+- [ [`f27b7`](https://github.com/thheller/shadow-cljs/commit/f27b7bb896bc089c35a6cc17723678c7ba53c2a6) ] fix push-state with */* accept
+- [ [`ab4d0`](https://github.com/thheller/shadow-cljs/commit/ab4d005b9bca2fe374b3871dda840e39003fed60) ] shadow-http bump
+- [ [`6a2e7`](https://github.com/thheller/shadow-cljs/commit/6a2e758f56179a07873a3ba5fdb11e6379f4a28e) ] fix cljs repl load-file switching the current ns
+- [ [`357d8`](https://github.com/thheller/shadow-cljs/commit/357d839eda8e25667dff7f1e5e2b398e74044132) ] simplify cljs repl require
+- [ [`fbaf4`](https://github.com/thheller/shadow-cljs/commit/fbaf43d5f4c9b47b3f62ba984fe3dc0843c3b5e1) ] small shadow.remote relay debugging aid
+
+## [3.5.1](https://github.com/thheller/shadow-cljs/compare/282fcde1d7006539e6e53b055bb42405b1d2c070...231711ebd3c125158eb26db588d39a73a23d187a) - 2026-09-10
+- [ [`23171`](https://github.com/thheller/shadow-cljs/commit/231711ebd3c125158eb26db588d39a73a23d187a) ] closure compiler bump
+- [ [`394d6`](https://github.com/thheller/shadow-cljs/commit/394d6a15dbe3a8bf911ba600b2f29e4d2b352df7) ] fix .shadow-cljs/http.port not being written
+- [ [`c9afd`](https://github.com/thheller/shadow-cljs/commit/c9afd0f9ad14274284782fe17db0faf973e37e91) ] stop parsing user agent for browser clients
+- [ [`282fc`](https://github.com/thheller/shadow-cljs/commit/282fcde1d7006539e6e53b055bb42405b1d2c070) ] ensure .shadow-cljs dir exists first
+
+## [3.5.0](https://github.com/thheller/shadow-cljs/compare/3011066f95effbf0eeb693304d33b80c29ac4d2d...3011066f95effbf0eeb693304d33b80c29ac4d2d) - 2026-08-26
+- [ [`30110`](https://github.com/thheller/shadow-cljs/commit/3011066f95effbf0eeb693304d33b80c29ac4d2d) ] bump closure-compiler to v20260824 (#1275)
+
+## [3.4.13](https://github.com/thheller/shadow-cljs/compare/813d7b454cdcfefc1aea831fc853bd06e4524c3c...813d7b454cdcfefc1aea831fc853bd06e4524c3c) - 2026-08-25
+- [ [`813d7`](https://github.com/thheller/shadow-cljs/commit/813d7b454cdcfefc1aea831fc853bd06e4524c3c) ] shadow-http bump
+
+## [3.4.12](https://github.com/thheller/shadow-cljs/compare/64bc925cc851984e3478972621abf99c3076900d...b308ac155cc3b90e7c92801fe37167e71e8def2a) - 2026-08-03
+- [ [`b308a`](https://github.com/thheller/shadow-cljs/commit/b308ac155cc3b90e7c92801fe37167e71e8def2a) ] remove use a timestamp in caching logic
+- [ [`5e014`](https://github.com/thheller/shadow-cljs/commit/5e01483c27b7f9d230f1e58c05c0e5d5a2adce6d) ] sync deps.edn versions with project.clj, document :dev prerequisites (#1269)
+- [ [`64bc9`](https://github.com/thheller/shadow-cljs/commit/64bc925cc851984e3478972621abf99c3076900d) ] port CLJS-3024 fix
+
 ## [3.4.11](https://github.com/thheller/shadow-cljs/compare/0ea2b4275bd9754ffe4815fe9d0d6bc18acf48c6...bd2574b96c1170f71ceef90198721179e81b17d9) - 2026-05-18
 - [ [`bd257`](https://github.com/thheller/shadow-cljs/commit/bd2574b96c1170f71ceef90198721179e81b17d9) ] fix for CLJS-2292
 - [ [`0ea2b`](https://github.com/thheller/shadow-cljs/commit/0ea2b4275bd9754ffe4815fe9d0d6bc18acf48c6) ] fix npm-deps config scoping

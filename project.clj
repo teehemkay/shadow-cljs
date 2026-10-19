@@ -1,4 +1,4 @@
-(defproject org.clojars.teehemkay/shadow-cljs "3.4.11-bun.2"
+(defproject org.clojars.teehemkay/shadow-cljs "3.5.7-bun"
   :description "CLJS development tools"
   :url "https://github.com/teehemkay/shadow-cljs"
   :license {:name "Eclipse Public License"
@@ -27,7 +27,7 @@
    [com.google.code.findbugs/jsr305 "3.0.2"]]
 
   :dependencies
-  [[org.clojure/clojure "1.12.4"]
+  [[org.clojure/clojure "1.12.6"]
 
    [org.clojure/data.json "2.5.2"]
    [org.clojure/tools.cli "1.1.230"]
@@ -52,7 +52,7 @@
      org.clojure/google-closure-library
      org.clojure/google-closure-library-third-party]]
 
-   [com.google.javascript/closure-compiler "v20250407"]
+   [com.google.javascript/closure-compiler "v20260907"]
 
    [org.clojure/google-closure-library "0.0-20250515-f04e4c0e"]
    [org.clojure/google-closure-library-third-party "0.0-20250515-f04e4c0e"]
@@ -61,7 +61,7 @@
    [thheller/shadow-client "1.4.0"]
    [thheller/shadow-cljsjs "0.0.22"]
 
-   [com.thheller/shadow-http "0.1.8"]
+   [com.thheller/shadow-http "0.1.11"]
 
    [hiccup "1.0.5"]
    [ring/ring-core "1.15.3"
