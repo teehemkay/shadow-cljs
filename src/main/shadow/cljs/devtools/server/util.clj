@@ -212,17 +212,23 @@
   ;; sliding, so a stalled printer never makes the worker, whose output mult
   ;; waits on every tap, wait too. one slot dropped whatever the next message
   ;; overtook while the previous one printed, a build failure included; 1024
-  ;; absorbs a compile's bursts and only drops the oldest under a printer
-  ;; stalled that long
+  ;; only drop the oldest under a printer stalled that long. :build-log
+  ;; events a printer that is not verbose would ignore never take a slot, or
+  ;; a cold compile's thousands of them would push a waiting failure out
   (let [chan
-        (-> (async/sliding-buffer 1024)
-            (async/chan))]
+        (async/chan
+          (async/sliding-buffer 1024)
+          (remove #(and (not verbose) (= :build-log (:type %)))))]
 
     (async/go
       (loop []
         (when-some [x (<! chan)]
-          (when (print-worker-out x verbose)
-            (recur)))))
+          (if (print-worker-out x verbose)
+            (recur)
+            ;; the output disconnected. closing makes the mult drop this
+            ;; tap, which would otherwise keep a full buffer of build
+            ;; results for as long as the worker runs
+            (async/close! chan)))))
 
     chan))
 
