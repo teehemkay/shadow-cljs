@@ -52,7 +52,7 @@ CLOSED: [2026-10-19 Mon 16:13]
 
 kiln's =deps.edn= pins =org.clojars.teehemkay/shadow-cljs= at =3.4.11-bun=, so it has neither the managed-runtime follow-ups nor the 3.5.7 sync. Move it to =3.5.7-bun= and run kiln's build and tests. Follows [[id:20261019T131148.547575][the sync to upstream 3.5.7]].
 
-[2026-10-19 Mon 16:13] Every project using shadow-cljs moved, each on its own =main=, unpushed:
+[2026-10-19 Mon 16:13] Every project using shadow-cljs moved, each on its own =main=, and pushed at 16:16:
 - kiln, ik and bunbushka to =3.5.7-bun= with npm =3.5.7=; bunbushka's project template too, which was still on =3.3.7-bun=.
 - organon's extension from upstream npm 2.28 to =3.5.7=.
 

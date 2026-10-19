@@ -6,12 +6,12 @@ This is the live status of the Bun fork of shadow-cljs, published as =org.clojar
 
 *Keep this document current.* Whenever an effort changes status, update the status board and that effort's section in the same change that does the work.
 
-Last updated: [2026-10-19 Mon 16:13] — =3.5.7-bun= is live and every consumer is on it. Nothing in flight; the two deferred items are what remains.
+Last updated: [2026-10-19 Mon 16:20] — =3.5.7-bun= is live and every consumer is on it, pushed. Nothing in flight; the two deferred items are what remains.
 
 * Where we are in the chain
 
 - *Upstream 3.5.7 sync:* finished and released as =3.5.7-bun=.
-- *Consumers:* kiln, ik, bunbushka and organon are on 3.5.7, committed locally to each =main=.
+- *Consumers:* kiln, ik, bunbushka and organon are on 3.5.7, pushed to each =main=. kiln's and ik's working checkouts need =bun install= when they next switch to =main=.
 
 * Status board
 
@@ -52,7 +52,7 @@ This section says the same thing as the rest of the document for a reader who do
 
 ** Consumers on the fork's latest — DONE
 
-*Takeaway:* on [2026-10-19 Mon] every project using shadow-cljs moved to 3.5.7, committed to its own =main= and not yet pushed.
+*Takeaway:* on [2026-10-19 Mon] every project using shadow-cljs moved to 3.5.7, merged to its own =main= and pushed.
 - kiln, ik and bunbushka: =3.5.7-bun= with npm =3.5.7=. bunbushka's project template moved too, from =3.3.7-bun=.
 - organon's extension: upstream npm 2.28 to =3.5.7=. Its two browser bundles still advanced-compile without the polyfills 3.x dropped.
 - Each repo's gates matched a baseline run on its =main=.
