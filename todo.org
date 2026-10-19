@@ -1,4 +1,5 @@
-* TODO The managed runtime, worker-owned — follow-ups [5/10]
+* DONE The managed runtime, worker-owned — follow-ups [5/10]
+CLOSED: [2026-10-19 Mon 13:11]
 :PROPERTIES:
 :CREATED:  [2026-10-18 Sun 19:54]
 :ID:       20261018T195432.416080
@@ -9,13 +10,16 @@
 
 Leftovers of =wip/managed-runtime-every-eval-path=, which makes the worker own a managed build's JS process so every REPL path, CIDER's =nrepl-select= included, evaluates in it. The lifecycle and its rejected policies are in [[my:shadow-cljs/doc/js-runtime-architecture.md]]. Found while executing [[id:20261006T030825.516217][agent-skills' spike skill plan]], whose umbrella is [[id:20261018T195432.387346][there]].
 
-** TODO Release the fork so kiln gets the managed-runtime fix
+** DONE Release the fork so kiln gets the managed-runtime fix
+CLOSED: [2026-10-19 Mon 13:11]
 :PROPERTIES:
 :CREATED:  [2026-10-18 Sun 19:54]
 :ID:       20261018T195432.623154
 :END:
 
 kiln uses the published =org.clojars.teehemkay/shadow-cljs= =3.4.11-bun= jar, so the fix reaches it only through a merge and a new release, or a local install under another version. Until then, a CIDER session on kiln's =:dev= build needs =(shadow.cljs.devtools.api/repl :dev)= evaluated once to start Bun. tmk's call. From [[my:agent-skills/docs/implementations/2026/2026-10/2026-10-06-spike-skill-implementation.org::#session-1][the spike skill's implementation record, session 1]].
+
+Released as =3.4.11-bun.2= on [2026-10-19 Mon], a re-release on upstream =3.4.11= carrying every fix under this heading. kiln gets it by moving its =deps.edn= to that version. Upstream has since reached 3.5.7; syncing to it is separate work.
 
 ** DONE The managed-runtime tests are outside lein test
 CLOSED: [2026-10-19 Mon 12:23]

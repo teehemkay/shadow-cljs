@@ -6,12 +6,12 @@ This is the live status of the Bun fork of shadow-cljs, published as =org.clojar
 
 *Keep this document current.* Whenever an effort changes status, update the status board and that effort's section in the same change that does the work.
 
-Last updated: [2026-10-19 Mon 12:37] — The fork now has CI on GitHub Actions, green on =master=, and the README discloses that the fork is heavily AI-assisted. The only item left under the managed-runtime follow-ups is the release that gets kiln these fixes; that is tmk's call.
+Last updated: [2026-10-19 Mon 13:11] — =3.4.11-bun.2= is live on Clojars with the managed-runtime fixes, and the follow-ups umbrella is closed. Next: move kiln's =deps.edn= to =3.4.11-bun.2=; after that, syncing to upstream 3.5.7 is the main open effort.
 
 * Where we are in the chain
 
 - *Managed-runtime follow-ups:* finished (merged), the websocket gaps and the watch printer included. What remains is the release, CI, and upstream work.
-- *Next ritual:* a release, per [[my:shadow-cljs/docs/clojars-publishing.org][the Clojars publishing doc]], once tmk decides to cut one. Releasing closes the follow-ups umbrella in todo.org.
+- *Released:* =3.4.11-bun.2=. Next is kiln picking it up, then a sync to upstream 3.5.7, which changes the managed runtime's own files (=worker.clj=, =worker/impl.clj=, =relay/local.clj=, =api.clj=).
 
 * Status board
 
@@ -23,7 +23,8 @@ Legend: *DONE* shipped · *IN PROGRESS* actively building · *PAUSED* set aside 
 | Upstream 3.4.11 sync, full-drop-in jar  | *DONE*      | Released as =3.4.11-bun=, dashboard assets committed                    |
 | Worker-owned managed runtime            | *DONE*      | Every eval path, CIDER included, evaluates in the worker's Bun process |
 | Managed-runtime follow-ups              | *DONE*      | Quiet tests, guarded websocket, node-repl under bun, three reviews      |
-| Release the fork for kiln               | *PENDING*   | kiln still uses =3.4.11-bun= without the managed-runtime fix            |
+| Release =3.4.11-bun.2=                  | *DONE*      | Same-base re-release carrying every follow-up fix                       |
+| Sync to upstream 3.5.7                  | *PENDING*   | 42 commits; touches worker, impl, relay and api                         |
 | Fork CI on GitHub Actions               | *DONE*      | =lein test= plus the bun-backed =src/repl= suites, on every push        |
 | README AI-assistance disclaimer         | *DONE*      | Highlighted notice above the fork notice                                |
 | Relay websocket closes on loop end      | *DONE*      | No client left connected but deaf; faults logged; access-denied closes  |
@@ -64,10 +65,18 @@ This section says the same thing as the rest of the document for a reader who do
 - =util/stdout-dump= buffers 1024 printable messages, sliding, and closes its channel when its output disconnects.
 - Left for upstream: a peer that never answers a server close keeps its socket, and shadow-http answers its own close twice.
 
-** Release the fork for kiln — PENDING
+** Release =3.4.11-bun.2= — DONE
 
-*Takeaway:* tmk's call; the procedure is in [[my:shadow-cljs/docs/clojars-publishing.org][the Clojars publishing doc]].
-- Until a release, a CIDER session on kiln's =:dev= build needs =(shadow.cljs.devtools.api/repl :dev)= once to start Bun.
+*Takeaway:* live on Clojars since [2026-10-19 Mon]; kiln picks it up by moving its =deps.edn= to that version.
+- A same-base re-release on upstream =3.4.11=; the publishing doc now names the =-bun.N= scheme.
+- The jar carries the dashboard, as =3.4.11-bun= did.
+
+** Sync to upstream 3.5.7 — PENDING
+
+*Takeaway:* 42 upstream commits; the next release would be =3.5.7-bun=.
+- They touch the managed runtime's own files, so expect conflicts in =worker.clj=, =worker/impl.clj=, =relay/local.clj= and =devtools/api.clj=.
+- No dashboard source changed, so no UI rebuild is needed.
+- Procedure in [[my:shadow-cljs/docs/clojars-publishing.org][the Clojars publishing doc]]; CI checks the merge.
 
 ** Fork CI on GitHub Actions — DONE
 
