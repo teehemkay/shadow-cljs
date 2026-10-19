@@ -1,3 +1,6 @@
+> [!IMPORTANT]
+> **This fork is heavily AI-assisted.** Its changes to shadow-cljs (the `:js-runtime` option, the worker-managed Bun runtime, and their tests, CI and docs) were written largely by [Claude Code](https://claude.com/product/claude-code), Anthropic's AI coding agent, under the maintainer's direction. Upstream shadow-cljs, by Thomas Heller, is not part of that, and its maintainers have not reviewed this fork. Weigh that before depending on it, and report fork issues here rather than upstream.
+
 > **Fork: `:js-runtime` (Bun) support**
 >
 > This is a fork of [thheller/shadow-cljs](https://github.com/thheller/shadow-cljs) that adds the `:js-runtime` build option, letting node-family targets (`:node-script`, `:node-test`) run on [Bun](https://bun.sh) instead of Node.js. Published to Clojars as `org.clojars.teehemkay/shadow-cljs`.
