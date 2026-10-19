@@ -81,6 +81,8 @@ Upstream =thheller/shadow-cljs= ships frequently; this fork periodically catches
    lein test     # expect the js-runtime / cli-opts tests green among the rest
    #+end_src
 
+   Green tests do not cover behaviour changes in upstream's public API, so skim =git diff $(git merge-base master upstream/master) upstream/master -- src/main/shadow/cljs/devtools/api.clj= for changed return values and carry each into the release notes. The 3.5.7 sync found one: under a running watch, =api/compile= returns =:ok= or =:error= rather than =:done=, which upstream's changelog does not mention.
+
 6. Commit the merge, recording in the message what conflicted and how it was resolved — future syncs read it.
 
 7. Continue. Rebuild the dashboard (see [[*Building the dashboard UI]]) only when the absorbed range changed its source: =git diff --stat $(git merge-base master upstream/master) upstream/master -- src/main/shadow/cljs/ui packages/ui=, run while =master= still lacks the merge, prints nothing when it did not. The 3.4.11 → 3.5.7 sync needed no rebuild. Then publish (see [[*Releasing a new version]]). Verifying against the downstream consumers (=kiln=, =bunbushka=, =ik=) before publishing is cheap insurance: =lein install= the synced version locally, point each consumer's =deps.edn= at =<x.y.z>-bun=, and run its build/tests.
