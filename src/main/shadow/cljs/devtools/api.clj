@@ -204,7 +204,8 @@
   ([build-id]
    (watch build-id {}))
   ([build-id opts]
-   (if (worker-running? build-id)
+   ;; build-id may also be a whole build config
+   (if (worker-running? (if (map? build-id) (:build-id build-id) build-id))
      :already-watching
      (let [build-config
            (if (map? build-id)

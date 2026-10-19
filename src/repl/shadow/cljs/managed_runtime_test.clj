@@ -220,6 +220,13 @@
                                 (java.io.StringReader. (str bun-check "\n")))]
                  (api/repl build-id {:prompt false}))))))))
 
+(deftest watching-a-running-build-by-its-config-says-so
+  ;; with-watched-build relies on this to catch a worker left by an
+  ;; aborted run
+  (with-watched-build (script-config :managed-probe-rewatch)
+    (fn [config]
+      (is (= :already-watching (api/watch config {:autobuild false}))))))
+
 (deftest a-js-runtime-given-on-the-command-line-is-managed
   ;; --js-runtime reaches the build through :config-merge, so the raw build
   ;; config never carries it.
