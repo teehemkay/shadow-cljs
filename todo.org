@@ -146,7 +146,11 @@ CLOSED: [2026-10-19 Mon 11:55]
 
 =util/stdout-dump=, the printer =api/watch= uses when no =:log-chan= is given, reads through a one-slot sliding buffer, so a message arriving before its go-loop takes the previous one replaces it. [[id:20261018T195432.663061][The failed-compile test]] lost its =Build failure:= report that way whenever the worker's shutdown notice followed closely. A REPL user watching a build could lose a real failure report the same way. Upstream shadow-cljs behaviour; decide whether the fork should change it. Raised by a code review of =wip/managed-runtime-follow-ups=.
 
-The fork changes it: the buffer is now 1024 slots, still sliding so a stalled printer never makes the worker wait, and only the oldest messages go under a stall that long. =shadow.cljs.devtools.server.util-test= holds the stdout lock while three messages arrive and fails on the one-slot buffer.
+The fork changes it, with =shadow.cljs.devtools.server.util-test= covering each point:
+
+- The buffer is 1024 slots, still sliding so a stalled printer never makes the worker wait.
+- =:build-log= events a printer that is not verbose throws away take no slots, so a cold compile cannot push a waiting failure out.
+- When its output disconnects, the printer closes its channel and the worker's output mult drops the tap, rather than the buffer holding build results for the worker's lifetime.
 
 ** TODO The managed runtime's two known limitations
 :PROPERTIES:
