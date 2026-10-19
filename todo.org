@@ -1,7 +1,10 @@
-* TODO The managed runtime, worker-owned — follow-ups [/]
+* TODO The managed runtime, worker-owned — follow-ups [5/10]
 :PROPERTIES:
 :CREATED:  [2026-10-18 Sun 19:54]
 :ID:       20261018T195432.416080
+:END:
+:BACKLINKS:
+- [[id:20261018T195432.377522][The spike skill — implementation record]]
 :END:
 
 Leftovers of =wip/managed-runtime-every-eval-path=, which makes the worker own a managed build's JS process so every REPL path, CIDER's =nrepl-select= included, evaluates in it. The lifecycle and its rejected policies are in [[my:shadow-cljs/doc/js-runtime-architecture.md]]. Found while executing [[id:20261006T030825.516217][agent-skills' spike skill plan]], whose umbrella is [[id:20261018T195432.387346][there]].
@@ -28,6 +31,9 @@ CLOSED: [2026-10-18 Sun 22:05]
 :CREATED:  [2026-10-18 Sun 19:54]
 :ID:       20261018T195432.643690
 :END:
+:BACKLINKS:
+- [[id:20261018T195432.377522][The spike skill — implementation record]]
+:END:
 
 The tests drive nREPL (=nrepl-select=) and =api/cljs-eval=; the stdin path, =api/repl= without nREPL into =repl-impl/stdin-takeover!=, is not driven, though it reaches the same =repl-impl/do-repl= code. From [[my:agent-skills/docs/implementations/2026/2026-10/2026-10-06-spike-skill-implementation.org::#session-1][the spike skill's implementation record, session 1]].
 
@@ -38,6 +44,9 @@ CLOSED: [2026-10-18 Sun 22:09]
 :PROPERTIES:
 :CREATED:  [2026-10-18 Sun 19:54]
 :ID:       20261018T195432.653208
+:END:
+:BACKLINKS:
+- [[id:20261018T195432.377522][The spike skill — implementation record]]
 :END:
 
 In a dev server started as =clojure -M:start no-go= plus =server/start!=, =repl-impl/node-repl*= compiles and launches its process, under bun or node alike, but no runtime connects within 8 s. Not caused by the managed-runtime work; unexplained. The node-repl test therefore asserts only that no managed process is added. From [[my:agent-skills/docs/implementations/2026/2026-10/2026-10-06-spike-skill-implementation.org::#session-1][the spike skill's implementation record, session 1]].
@@ -52,6 +61,11 @@ CLOSED: [2026-10-18 Sun 20:29]
 :PROPERTIES:
 :CREATED:  [2026-10-18 Sun 19:54]
 :ID:       20261018T195432.663061
+:END:
+:BACKLINKS:
+- [[id:20261018T203700.701114][The default watch output can drop a build-failure report]]
+- [[id:20261018T202955.491171][The launch-failure tests leave their warnings uncaptured]]
+- [[id:20261018T195432.377522][The spike skill — implementation record]]
 :END:
 
 =a-failed-compile-leaves-the-process-alone= triggers a compile failure on purpose, and shadow prints its =FileNotFoundException= trace from the worker thread on every run; the test asserts the failure through =:failure-data= but does not capture or check that output. From [[my:agent-skills/docs/implementations/2026/2026-10/2026-10-06-spike-skill-implementation.org::#session-1][the spike skill's implementation record, session 1]].
