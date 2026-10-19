@@ -112,9 +112,14 @@
       ;; this sucks too, client gets open first then followed by close
       ;; {:ws-reject [4000 "Invalid server-token."]}
       ;; so we just send an access denied message and disconnect
-      (let [ws-in (async/chan)
+      ;; closing ws-out after the message is the disconnect: the handler
+      ;; closes the websocket once ws-out is drained. nothing reads ws-in,
+      ;; so it starts closed, or a frame from the client would block the
+      ;; reader for good
+      (let [ws-in (doto (async/chan) (async/close!))
             ws-out (async/chan 1 (map transit-str))]
         (async/>!! ws-out {:op :access-denied})
+        (async/close! ws-out)
         (websocket/ws-upgrade ws-in ws-out))
 
       ;; relay can be very chatty, try to not drop too many messages
