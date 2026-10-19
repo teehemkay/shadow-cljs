@@ -43,10 +43,17 @@ The release notes should name one upstream behaviour change that upstream's chan
 
 [2026-10-19 Mon 15:30] =3.5.7-bun= is live on Clojars. The first deploy failed with 401 Unauthorized on every artifact; it succeeded after the 1Password item was checked, so the cause was on the credential side.
 
-* TODO Move kiln to =3.5.7-bun=
+* DONE Move kiln to =3.5.7-bun=
+CLOSED: [2026-10-19 Mon 16:13]
 :PROPERTIES:
 :CREATED:  [2026-10-19 Mon 15:30]
 :ID:       20261019T153055.570982
 :END:
 
 kiln's =deps.edn= pins =org.clojars.teehemkay/shadow-cljs= at =3.4.11-bun=, so it has neither the managed-runtime follow-ups nor the 3.5.7 sync. Move it to =3.5.7-bun= and run kiln's build and tests. Follows [[id:20261019T131148.547575][the sync to upstream 3.5.7]].
+
+[2026-10-19 Mon 16:13] Every project using shadow-cljs moved, each on its own =main=, unpushed:
+- kiln, ik and bunbushka to =3.5.7-bun= with npm =3.5.7=; bunbushka's project template too, which was still on =3.3.7-bun=.
+- organon's extension from upstream npm 2.28 to =3.5.7=.
+
+Each repo's gates matched a baseline run on its =main=, and the compiles and advanced builds report no warnings.

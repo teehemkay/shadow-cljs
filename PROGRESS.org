@@ -6,12 +6,12 @@ This is the live status of the Bun fork of shadow-cljs, published as =org.clojar
 
 *Keep this document current.* Whenever an effort changes status, update the status board and that effort's section in the same change that does the work.
 
-Last updated: [2026-10-19 Mon 15:30] — =3.5.7-bun= is live on Clojars, carrying the upstream 3.5.7 sync. Next: move kiln's =deps.edn= to it.
+Last updated: [2026-10-19 Mon 16:13] — =3.5.7-bun= is live and every consumer is on it. Nothing in flight; the two deferred items are what remains.
 
 * Where we are in the chain
 
 - *Upstream 3.5.7 sync:* finished and released as =3.5.7-bun=.
-- *Consumers:* kiln still pins =3.4.11-bun= and can go straight to =3.5.7-bun=.
+- *Consumers:* kiln, ik, bunbushka and organon are on 3.5.7, committed locally to each =main=.
 
 * Status board
 
@@ -20,7 +20,7 @@ Legend: *DONE* shipped · *IN PROGRESS* actively building · *PAUSED* set aside 
 | Effort                           | Status        | One-line                                                          |
 |----------------------------------+---------------+-------------------------------------------------------------------|
 | Sync to upstream 3.5.7           | *DONE*        | Released as =3.5.7-bun=; two conflicts, CI green                  |
-| kiln on the fork's latest        | *PENDING*     | kiln pins =3.4.11-bun=; move it to =3.5.7-bun=                    |
+| Consumers on the fork's latest   | *DONE*        | kiln, ik, bunbushka on =3.5.7-bun=; organon on npm =3.5.7=        |
 | Runtime's two known limitations  | *DEFERRED*    | Orphaned process on a throwing step; exit 143 on a stopped worker |
 | Offer the handler to shadow-http | *DEFERRED*    | Would retire the fork's copy; two shadow-http close limits        |
 
@@ -37,7 +37,7 @@ This section says the same thing as the rest of the document for a reader who do
 - Worker :: shadow-cljs's per-build process that compiles and owns that runtime.
 - Upstream sync :: merging the original project's newer releases into the fork.
 
-*Where we are right now.* The fork has caught up with the original project's newest version and is published. The project that depends on it, kiln, gets the update once it switches to the new version.
+*Where we are right now.* The fork has caught up with the original project's newest version, is published, and every project that uses it has switched to it.
 
 * Detailed status
 
@@ -50,9 +50,12 @@ This section says the same thing as the rest of the document for a reader who do
 - The release notes must name one behaviour change: under a running watch, =api/compile= returns =:ok= or =:error= rather than =:done=. The CLI and kiln, bunbushka and ik are unaffected.
 - The publishing doc's sync procedure now reads upstream's worker and API changes, runs the =src/repl= suites, and checks whether the dashboard needs a rebuild.
 
-** kiln on the fork's latest — PENDING
+** Consumers on the fork's latest — DONE
 
-*Takeaway:* kiln's =deps.edn= pins =3.4.11-bun=; move it to =3.5.7-bun= and run kiln's build and tests. Tracked in todo.org.
+*Takeaway:* on [2026-10-19 Mon] every project using shadow-cljs moved to 3.5.7, committed to its own =main= and not yet pushed.
+- kiln, ik and bunbushka: =3.5.7-bun= with npm =3.5.7=. bunbushka's project template moved too, from =3.3.7-bun=.
+- organon's extension: upstream npm 2.28 to =3.5.7=. Its two browser bundles still advanced-compile without the polyfills 3.x dropped.
+- Each repo's gates matched a baseline run on its =main=.
 
 * Deferred & parked
 
