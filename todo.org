@@ -175,10 +175,12 @@ Two limits of shadow-http itself, which the fork cannot reach through =WebSocket
 
 Split out of [[id:20261018T195432.416080][the managed-runtime follow-ups]], so that umbrella can close once the fork is released.
 
-* TODO Sync the fork to upstream 3.5.7
+* ONIT Sync the fork to upstream 3.5.7
 :PROPERTIES:
 :CREATED:  [2026-10-19 Mon 13:11]
 :ID:       20261019T131148.547575
 :END:
 
 Upstream =thheller/shadow-cljs= is 42 commits ahead of the fork's =3.4.11= base, up to =bump 3.5.7=. Those commits touch the managed runtime's own files, so expect conflicts in =worker.clj=, =worker/impl.clj=, =relay/local.clj= and =devtools/api.clj=. No dashboard source changed, so no UI rebuild is needed. Follow [[my:shadow-cljs/docs/clojars-publishing.org::*Syncing to a new upstream version][the publishing doc's sync procedure]], let CI check the merge, then release =3.5.7-bun=.
+
+[2026-10-19 Mon 13:15] Merged on branch =sync/upstream-3.5.7= as =4c9769e3=; =lein test= and the =repl-tests= suites pass locally. Only =project.clj= and =worker.clj= conflicted, and no UI rebuild is needed. Next: push the branch so CI checks it, merge to =master=, then release.
