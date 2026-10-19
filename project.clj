@@ -113,6 +113,12 @@
    :aot
    {:aot [repl]}
 
+   ;; the fork's src/repl suites, run by shadow.cljs.server-test-runner on
+   ;; the release's own dependencies rather than deps.edn's
+   :repl-tests
+   {:source-paths
+    ["src/repl"]}
+
    :uberjar
    {:aot [shadow.cljs.devtools.cli
           shadow.cljs.devtools.api
