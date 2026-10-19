@@ -104,13 +104,16 @@
   "A :log-chan for api/watch that keeps the build-failure messages whose
   :report satisfies EXPECTED? in the atom FAILURES, so a test can check an
   expected failure report rather than dump it. Every other message, an
-  unexpected failure included, is printed as api/watch's own dump would.
+  unexpected failure included, is printed with api/watch's own printer.
 
   Duplicates util/stdout-dump's drain loop on purpose: stdout-dump reads
   through a one-slot sliding buffer that drops a message the next one
   overtakes, and a test's expected report can be the one dropped. The buffer
   here keeps every message without making the worker, whose output mult
-  waits on every tap, wait on the printing."
+  waits on every tap, wait on the printing. Unlike stdout-dump, it keeps
+  draining after the printer reports a closed output stream: a sliding
+  buffer never blocks its writer, but this one would, once full, block the
+  worker."
   [expected? failures]
   (let [ch (async/chan 1024)]
     (async/go-loop []
