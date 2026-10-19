@@ -1,0 +1,44 @@
+#+TITLE: The 3.5.7 sync, its release, and the rollout to every consumer
+#+DATE: [2026-10-19 Mon 16:20]
+#+AUTHOR: Claude Code (claude-opus-5-5)
+#+PROJECT: shadow-cljs
+
+* Context
+
+Context: [[my:shadow-cljs/docs/clojars-publishing.org::*Syncing to a new upstream version][the publishing doc's sync procedure]] (maintenance, post-release and post-rollout).
+Triggered by closing the day's arc: the fork synced to upstream 3.5.7, released as =3.5.7-bun=, and every project using shadow-cljs moved onto it.
+
+The sync TODO had been filed by an earlier session that morning. This session ran it end to end: merge on a branch, local and CI validation, fast-forward to =master=, Clojars deploy, then kiln, ik, bunbushka and organon bumped through worktrees off their own =main=s, merged and pushed.
+
+* Project Notes
+
+** Key Decisions
+
+- Resolved the =worker.clj= conflict by keeping both sides: the fork's managed-runtime wait and upstream's =grab-state!= were unrelated functions added at the same spot. Recorded in the merge commit [[orgit-rev:~/dev/my/shadow-cljs::4c9769e37ab6a23015b3a46244d3862477228107][4c9769e3]].
+- Treated upstream's =:failure-data= reshape as a comment fix, not a code fix: =contains?= still marks a failed compile, but the comment's stated reason had become false.
+- Did not rebuild the dashboard: no file under =src/main/shadow/cljs/ui= or =packages/ui= changed. The publishing doc had claimed every sync needs one; it now says how to check.
+- Rolled consumers out on =chore/shadow-cljs-3.5.7= worktrees off =main=, because kiln and ik each had another session working in the main checkout on a different branch.
+- Moved kiln's and ik's =main= with =git fetch . <branch>:main=, which fast-forwards a ref that is not checked out without touching anyone's working tree.
+
+** What the sync surfaced that the procedure did not ask for
+
+- An auto-merged change in =api/compile=: under a running watch it now triggers a watch compile and returns =:ok= or =:error= rather than =:done=. Upstream's changelog calls it "slightly improve compile trigger api". A side agent caught it; I had read the diff and not reported it. The CLI is unaffected because it calls =api/compile*=, through both the direct and the =from-remote= path. Step 5 of the procedure now asks for a skim of =api.clj= ([[orgit-rev:~/dev/my/shadow-cljs::e9c9ab6a36d3dc9f1def008bc5776a4e5b16fe85][e9c9ab6a]]).
+- The procedure's validation step listed only =lein test=, which never reaches =src/repl=, where the managed-runtime suites live. Step 5 now gives CI's =repl-tests= command.
+- bunbushka's project template was two releases behind, on =3.3.7-bun=. Only a grep for old version strings across each consumer found it; the consumer's own =deps.edn= was already covered.
+- The 3.x npm package drops the Node built-in polyfills (=buffer=, =browserify-*=). That made organon, the only consumer with =:browser= builds, the one whose advanced =release= compile mattered most. It passed.
+
+** Gotchas
+
+- =git branch -d= checks "merged" against the checked-out branch, not =main=. In kiln and ik it refused a branch identical to =main=; comparing the two SHAs first made =-D= safe.
+- zsh treats a word starting with an equals sign as a command lookup, so a separator line of equals signs in a Bash call fails with "not found". Dashes are safe.
+- An environment assignment such as ~REQUIRE_BUN=1~ inside verbatim markup collapses, since the value contains the marker character; tilde code markup avoids it.
+
+* Technical Insights
+
+** Read auto-merged hunks in files the fork owns, not only conflicts
+
+A merge that conflicts in two files and auto-merges in three looks like a two-file problem. The real risk sat in the auto-merged three: a changed data shape and a changed return value, neither of which any test noticed. Listing the files both sides touched (=comm -12= over the two =git diff --name-only= sets from the merge base) gives the reading list; the conflicts are only part of it.
+
+** A baseline run is what makes "tests pass" mean something after a bump
+
+Each consumer ran its gates twice: on plain =main=, then with the bump. Identical counts and identical flagged lines show that the bump changed nothing; a single green run shows only that something passed. The cheap way to get the baseline after editing first was to stash the bump, run, and pop.
