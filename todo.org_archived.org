@@ -1,6 +1,48 @@
 
 Archived entries from file /Users/tmk/dev/my/shadow-cljs/todo.org
 
+* DONE Sync the fork to upstream 3.5.7
+CLOSED: [2026-10-19 Mon 15:30]
+:PROPERTIES:
+:CREATED:  [2026-10-19 Mon 13:11]
+:ID:       20261019T131148.547575
+:ARCHIVE_TIME: 2026-10-19 Mon 16:46
+:ARCHIVE_FILE: ~/dev/my/shadow-cljs/todo.org
+:ARCHIVE_CATEGORY: todo
+:ARCHIVE_TODO: DONE
+:END:
+:BACKLINKS:
+- [[id:20261019T153055.570982][Move kiln to =3.5.7-bun=]]
+:END:
+
+Upstream =thheller/shadow-cljs= is 42 commits ahead of the fork's =3.4.11= base, up to =bump 3.5.7=. Those commits touch the managed runtime's own files, so expect conflicts in =worker.clj=, =worker/impl.clj=, =relay/local.clj= and =devtools/api.clj=. No dashboard source changed, so no UI rebuild is needed. Follow [[my:shadow-cljs/docs/clojars-publishing.org::*Syncing to a new upstream version][the publishing doc's sync procedure]], let CI check the merge, then release =3.5.7-bun=.
+
+[2026-10-19 Mon 13:15] Merged on branch =sync/upstream-3.5.7= as =4c9769e3=; =lein test= and the =repl-tests= suites pass locally. Only =project.clj= and =worker.clj= conflicted, and no UI rebuild is needed. Next: push the branch so CI checks it, merge to =master=, then release.
+
+The release notes should name one upstream behaviour change that upstream's changelog only calls "slightly improve compile trigger api": while a watch runs for the build, =shadow.cljs.devtools.api/compile= triggers a watch compile and returns =:ok= or =:error= rather than =:done=. The CLI's =compile= goes through =api/compile*= and is unaffected, and kiln, bunbushka and ik never call the API namespace, so only REPL code that checks for =:done= is exposed.
+
+[2026-10-19 Mon 14:05] Fast-forwarded =master= to the sync branch after CI passed both jobs. Next: release =3.5.7-bun= per [[my:shadow-cljs/docs/clojars-publishing.org::*Releasing a new version][the publishing doc's release steps]], with the =api/compile= note above in its release notes.
+
+[2026-10-19 Mon 15:30] =3.5.7-bun= is live on Clojars. The first deploy failed with 401 Unauthorized on every artifact; it succeeded after the 1Password item was checked, so the cause was on the credential side.
+
+* DONE Move kiln to =3.5.7-bun=
+CLOSED: [2026-10-19 Mon 16:13]
+:PROPERTIES:
+:CREATED:  [2026-10-19 Mon 15:30]
+:ID:       20261019T153055.570982
+:ARCHIVE_TIME: 2026-10-19 Mon 16:45
+:ARCHIVE_FILE: ~/dev/my/shadow-cljs/todo.org
+:ARCHIVE_CATEGORY: todo
+:ARCHIVE_TODO: DONE
+:END:
+
+kiln's =deps.edn= pins =org.clojars.teehemkay/shadow-cljs= at =3.4.11-bun=, so it has neither the managed-runtime follow-ups nor the 3.5.7 sync. Move it to =3.5.7-bun= and run kiln's build and tests. Follows [[id:20261019T131148.547575][the sync to upstream 3.5.7]].
+
+[2026-10-19 Mon 16:13] Every project using shadow-cljs moved, each on its own =main=, and pushed at 16:16:
+- kiln, ik and bunbushka to =3.5.7-bun= with npm =3.5.7=; bunbushka's project template too, which was still on =3.3.7-bun=.
+- organon's extension from upstream npm 2.28 to =3.5.7=.
+
+Each repo's gates matched a baseline run on its =main=, and the compiles and advanced builds report no warnings.
 * DONE The managed runtime, worker-owned — follow-ups [9/9]
 CLOSED: [2026-10-19 Mon 13:11]
 :PROPERTIES:
