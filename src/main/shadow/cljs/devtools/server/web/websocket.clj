@@ -40,57 +40,75 @@
   [^WebSocketConnection connection ws-out closed]
   (loop []
     (if-some [msg (async/<!! ws-out)]
-      (let [ending
-            (try
-              (cond
-                (string? msg)
-                (do (.sendText connection ^String msg) nil)
+      (if-some [ending
+                (try
+                  (cond
+                    (string? msg)
+                    (do (.sendText connection ^String msg) nil)
 
-                (bytes? msg)
-                (do (.sendBinary connection ^bytes msg) nil)
+                    (bytes? msg)
+                    (do (.sendBinary connection ^bytes msg) nil)
 
-                :else
-                {::fault (ex-info "websocket message is neither text nor bytes"
-                           {:message-class (class msg)})})
-              (catch Exception e
-                (if (= ::open (deref closed close-wait-ms ::open))
-                  {::fault e}
-                  ::peer-gone)))]
-        (if (some? ending)
-          ending
-          (recur)))
+                    :else
+                    {::fault (ex-info "websocket message is neither text nor bytes"
+                               {:message-class (class msg)})})
+                  (catch Exception e
+                    (if (= ::open (deref closed close-wait-ms ::open))
+                      {::fault e}
+                      ::peer-gone))
+                  ;; an Error escaping would skip end-connection! and leave
+                  ;; the client connected but deaf
+                  (catch Throwable t
+                    {::fault t}))]
+        ending
+        (recur))
       ::ws-out-closed)))
 
 (defn- send-close
-  "Sends a close frame with STATUS. A connection whose writes are failing
-  usually fails this too, and the close is only a courtesy then, so a
-  failure is dropped."
+  "Sends a close frame with STATUS, as a courtesy. A connection whose writes
+  are failing usually fails this too, so a failure is dropped; after a send
+  that failed partway through a frame, the peer may read the close as a
+  protocol error rather than STATUS."
   [^WebSocketConnection connection status]
   (try
     (.sendClose connection status)
     (catch Exception _)))
 
+(defn- release-reader!
+  "Closes WS-IN and drains it. shadow-http's reader puts each frame on WS-IN
+  and blocks while it is full; closing does not release a put already
+  waiting, and a relay that dropped the client no longer takes, so without
+  the drain the reader would never read the peer's close reply. The
+  drained frames were bound for a client being dropped."
+  [ws-in]
+  (async/close! ws-in)
+  (while (some? (async/<!! ws-in))))
+
 (defn end-connection!
   "Ends CONNECTION after its write loop returned ENDING; every way the loop
   ends closes the websocket, so no client is left connected but deaf.
 
-  - A peer that already left, announced by CLOSED, needs nothing.
+  - A fault is always logged, even if the peer left meanwhile, since a
+    message that is neither text nor bytes is a programming error. The
+    relay drops the client and the peer gets an internal-error close.
+  - A peer that already left, announced by CLOSED, needs nothing more.
   - WS-OUT closed by its owner, the relay dropping the client or an
     upgrade that only had something to say, gets a normal close.
-  - A fault is logged; closing WS-IN tells the relay the client is gone,
-    and the peer gets an internal-error close."
+
+  Both closes release a reader blocked on WS-IN first."
   [connection ws-in closed ending]
   (cond
+    (::fault ending)
+    (do (log/warn-ex (::fault ending) ::send-failed)
+        (release-reader! ws-in)
+        (send-close connection 1011))
+
     (or (realized? closed) (= ::peer-gone ending))
     nil
 
-    (= ::ws-out-closed ending)
-    (send-close connection 1000)
-
     :else
-    (do (log/warn-ex (::fault ending) ::send-failed)
-        (async/close! ws-in)
-        (send-close connection 1011))))
+    (do (release-reader! ws-in)
+        (send-close connection 1000))))
 
 (deftype GuardedWebSocketHandler [^WebSocketConnection context closed ws-in ws-out]
   WebSocketHandler

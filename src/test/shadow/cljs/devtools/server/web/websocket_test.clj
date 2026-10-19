@@ -15,15 +15,17 @@
     [shadow.http.server WebSocketConnection WebSocketHandler]))
 
 (defn- connection
-  "A WebSocketConnection that records each text send and close in the atom
-  EVENTS. SEND-TEXT and SEND-CLOSE, when given, run after the record and
-  may throw; ON-CLOSE is called with the close status."
+  "A WebSocketConnection that records each text send, binary send and close
+  in the atom EVENTS. SEND-TEXT and SEND-CLOSE, when given, run after the
+  record and may throw; ON-CLOSE is called with the close status."
   [events & {:keys [send-text send-close on-close]}]
   (reify WebSocketConnection
     (isOpen [_] true)
     (sendText [_ text]
       (swap! events conj [:text text])
       (when send-text (send-text text)))
+    (sendBinary [_ bytes offset length]
+      (swap! events conj [:binary (vec (java.util.Arrays/copyOfRange ^bytes bytes (int offset) (int (+ offset length))))]))
     (sendClose [_ status]
       (swap! events conj [:close status])
       (when on-close (on-close status))
@@ -64,6 +66,24 @@
     (async/close! ws-out)
     (is (= ::ws/ws-out-closed (ws/write-loop (connection events) ws-out (promise))))
     (is (= [[:text "a"] [:text "b"]] @events))))
+
+(deftest bytes-are-sent-as-binary-frames
+  (let [events (atom [])
+        ws-out (async/chan 10)]
+    (async/>!! ws-out (byte-array [1 2 3]))
+    (async/close! ws-out)
+    (is (= ::ws/ws-out-closed (ws/write-loop (connection events) ws-out (promise))))
+    (is (= [[:binary [1 2 3]]] @events))))
+
+(deftest a-send-throwing-an-error-is-a-fault
+  ;; an Error escaping the loop would skip end-connection!, leaving the
+  ;; client connected but deaf
+  (let [ws-out (async/chan 10)
+        error (AssertionError. "no such frame")]
+    (async/>!! ws-out "a")
+    (is (identical? error
+          (::ws/fault
+            (ws/write-loop (connection (atom []) :send-text (fn [_] (throw error))) ws-out (promise)))))))
 
 (deftest a-send-failing-as-the-peer-leaves-ends-the-loop
   (let [events (atom [])
@@ -120,6 +140,28 @@
     (is (= [[Level/WARNING ex]] (map (juxt #(.getLevel ^LogRecord %) #(.getThrown ^LogRecord %)) records)))
     (is (closed? ws-in) "the relay sees the client leave")
     (is (= [[:close 1011]] @events))))
+
+(deftest a-fault-is-logged-even-as-the-peer-leaves
+  ;; a message that is neither text nor bytes is a programming error, and
+  ;; the peer leaving at the same moment must not hide it
+  (let [ex (ex-info "websocket message is neither text nor bytes" {})
+        [_ records] (capturing-send-failures
+                      #(ws/end-connection! (connection (atom [])) (async/chan) (doto (promise) (deliver true)) {::ws/fault ex}))]
+    (is (= [ex] (map #(.getThrown ^LogRecord %) records)))))
+
+(deftest ending-the-connection-releases-a-reader-blocked-on-ws-in
+  ;; shadow-http's reader puts each frame on ws-in and blocks while it is
+  ;; full; closing ws-in does not release a put already waiting, and a relay
+  ;; that dropped the client no longer takes, so the reader would never see
+  ;; the peer's close reply
+  (doseq [[ending wrap] [[::ws/ws-out-closed #(%)]
+                         [{::ws/fault (java.io.IOException. "write failed")} capturing-send-failures]]]
+    (let [ws-in (async/chan 1)]
+      (async/>!! ws-in "queued")
+      (let [blocked-put (future (async/>!! ws-in "waiting"))]
+        (Thread/sleep 50)
+        (wrap #(ws/end-connection! (connection (atom [])) ws-in (promise) ending))
+        (is (not= ::blocked (deref blocked-put 1000 ::blocked)) (pr-str ending))))))
 
 (deftest a-close-that-cannot-be-sent-is-dropped
   ;; a connection whose writes fail usually fails the close frame as well
