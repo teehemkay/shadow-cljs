@@ -87,6 +87,20 @@ Root cause: shadow-http's =CoreAsyncWebSocketHandler= write loop sends whatever 
 
 The fork now upgrades its relay websockets through =shadow.cljs.devtools.server.web.websocket=, a deliberate copy of upstream's handler whose write loop ends quietly when a send fails because the peer left, told apart from a live-connection fault by waiting for =onClose=. That covers both paths and any other kill-while-sending. Three whole-namespace runs afterwards carried none of the traces. Proposing the guarded loop to shadow-http upstream would let the copy go.
 
+** TODO The guarded websocket handler's remaining gaps
+:PROPERTIES:
+:CREATED:  [2026-10-19 Mon 07:25]
+:ID:       20261019T072556.442785
+:END:
+
+=shadow.cljs.devtools.server.web.websocket= ends its write loop quietly only when a failed send is followed by =onClose= within a second. Two code reviews of =wip/managed-runtime-follow-ups= found cases it leaves as upstream's handler did:
+
+- *A fault on a live connection.* =write-loop= rethrows, uncaught on its virtual thread, and closes neither =ws-out= nor the connection. The relay keeps queueing to a writer that is gone until =ws-out='s 4096 slots fill and =client-not-keeping-up= is logged. Logging the fault and closing =ws-out= would surface it at once.
+- *A reader blocked in =onText=.* shadow-http calls =onClose= only after its reader loop exits, and =onText= blocks while =ws-in= is full. A peer dying then gets its failed send rethrown as a live fault.
+- *The access-denied upgrade.* =api-remote-relay= gives an untrusted client an unbuffered =ws-in= that nothing reads, so a frame it sends blocks the reader for good. The connection is never closed either. Predates the fork.
+
+Proposing the guarded loop to shadow-http upstream would fix every =ws-upgrade= caller and let the copy go.
+
 ** TODO The default watch output can drop a build-failure report
 :PROPERTIES:
 :CREATED:  [2026-10-18 Sun 20:37]
