@@ -1,0 +1,38 @@
+#+TITLE: Managed-runtime follow-ups: quiet tests, a guarded websocket, three reviews
+#+DATE: [2026-10-19 Mon 10:25]
+#+AUTHOR: Claude Code (claude-opus-5-5)
+#+PROJECT: shadow-cljs
+
+* Context
+
+Context: [[my:shadow-cljs/todo.org::*The managed runtime, worker-owned — follow-ups][the managed-runtime follow-ups in todo.org]] (debugging, post-merge).
+
+Worked through the leftovers of the worker-owned managed runtime on =wip/managed-runtime-follow-ups=, 25 commits, fast-forwarded into =master= at [[orgit-rev:~/dev/my/shadow-cljs::c1858fc43396c6e4704253c6d1f5e69211155c8f][c1858fc4]]. Three =/code-review= rounds ran along the way. Left open: releasing the fork, CI for =src/repl=, the default watch printer, and the guarded handler's remaining gaps.
+
+* Project Notes
+
+** Key Decisions
+
+- *Expected failures are captured, not tolerated.* The failed-compile test hands =api/watch= a =:log-chan= that collects its report; the launch-failure tests put a =Filter= on =shadow.jvm-log/logger=, since an added handler sees records but cannot keep them from the console.
+- *The websocket race is fixed in a fork-owned copy of shadow-http's handler* ([[orgit-rev:~/dev/my/shadow-cljs::bd4c8e799254ff1d469a035caa5fcd75eb45fe46][bd4c8e79]]). A failed send waits up to 1 s for =onClose= to tell a departed peer from a live fault. The worker also leaves the relay before killing its runtime ([[orgit-rev:~/dev/my/shadow-cljs::57b30e02bc916a566f400b840dd79250ce88a942][57b30e02]]), which still matters: a notice offered to a closed channel logs =client-not-keeping-up=.
+- *The bun probe asks the shell* (=command -v=), exit 127 meaning absent and anything else throwing, and is memoized rather than delayed so one refused exec does not poison a long-lived JVM.
+- *Lint in this fork counts changed lines* in upstream files; fork-created files lint to exit 0.
+- *Watching by config map:* =api/watch= now returns =:already-watching= for a running build ([[orgit-rev:~/dev/my/shadow-cljs::db56e24b0d2f8a93609db73c63134fafcc0f5be0][db56e24b]]), an upstream bug from 2018.
+
+** Gotchas
+
+- =util/stdout-dump= reads through a one-slot sliding buffer, so a build-failure report can vanish when the shutdown notice follows it. A missing trace in one run and present in the next was that, not flakiness.
+- Bun gives stdin code the cwd as =__dirname=, where node gives a single dot. node-repl's prelude keyed on the dot, so under bun it crash-looped every ~135 ms with its stderr going nowhere ([[orgit-rev:~/dev/my/shadow-cljs::81144f8f3da84bbb954418e7f0d7b803cd04a3b1][81144f8f]]).
+- shadow-http closes the deflater, then calls =onClose=, then closes the socket. A send in that gap fails with "Deflater has been closed" while =isOpen= is still true, so =isOpen= cannot be the guard.
+- =api/repl= takes the =nrepl-select= branch whenever =api/*nrepl-init*= is bound, which shadow's nREPL does on every eval. A test of the stdin path must unbind it.
+- Two designs of the departure-order test passed without the fix. The one that discriminates wraps =stop-managed-runtime= and asks the relay's state at the moment of the kill.
+
+* Technical Insights
+
+** Check an ordering where it is decided
+
+An observer that notices event A and then checks whether B has happened yet races its own scheduling against B. Asking at the point where the code chooses the order (here, inside the function that does the kill) gives a deterministic answer, and a red run against the old order proves it discriminates.
+
+** A cached probe must not cache its failure
+
+Clojure's =delay= keeps the exception its body throws and rethrows the same object forever. For a probe of the environment, where failures are transient, =memoize= is the better fit: it keeps only values.
