@@ -1,0 +1,77 @@
+#+TITLE: shadow-cljs (Bun fork) — Progress & Status
+#+SUBTITLE: The single re-entry point: what's done, what's in flight, what's next
+#+OPTIONS: toc:2 num:nil
+
+This is the live status of the Bun fork of shadow-cljs, published as =org.clojars.teehemkay/shadow-cljs=. Reading it should be enough to re-enter the work cold. The per-item tracker is [[my:shadow-cljs/todo.org][todo.org]]; the managed runtime's design is [[my:shadow-cljs/doc/js-runtime-architecture.md][the js-runtime architecture doc]]; releasing is [[my:shadow-cljs/docs/clojars-publishing.org][the Clojars publishing doc]].
+
+*Keep this document current.* Whenever an effort changes status, update the status board and that effort's section in the same change that does the work.
+
+Last updated: [2026-10-19 Mon 10:26] — The managed-runtime follow-ups are merged into =master= and pushed; every suite is green. The fix still reaches kiln only through a release, so the next step is tmk's call on cutting a new =-bun= version.
+
+* Where we are in the chain
+
+- *Managed-runtime follow-ups:* finished (merged). Remaining items are decisions or upstream work, not code in flight.
+- *Next ritual:* a release, per [[my:shadow-cljs/docs/clojars-publishing.org][the Clojars publishing doc]], once tmk decides to cut one.
+
+* Status board
+
+Legend: *DONE* shipped · *IN PROGRESS* actively building · *PAUSED* set aside mid-work · *PENDING* known but not started · *DEFERRED* deliberately parked.
+
+| Effort                                  | Status      | One-line                                                                |
+|-----------------------------------------+-------------+-------------------------------------------------------------------------|
+| Bun-backed REPL and =--js-runtime=      | *DONE*      | =:js-runtime :bun= for node-family builds, March 2026                   |
+| Upstream 3.4.11 sync, full-drop-in jar  | *DONE*      | Released as =3.4.11-bun=, dashboard assets committed                    |
+| Worker-owned managed runtime            | *DONE*      | Every eval path, CIDER included, evaluates in the worker's Bun process |
+| Managed-runtime follow-ups              | *DONE*      | Quiet tests, guarded websocket, node-repl under bun, three reviews      |
+| Release the fork for kiln               | *PENDING*   | kiln still uses =3.4.11-bun= without the managed-runtime fix            |
+| CI for the =src/repl= tests             | *PENDING*   | Need a running server and bun; =lein test= skips them                   |
+| Guarded websocket handler's gaps        | *DEFERRED*  | Live-fault handling, blocked reader, access-denied; upstream candidate  |
+| Default watch printer drops reports     | *DEFERRED*  | Upstream behaviour; decide whether the fork changes it                  |
+
+* In plain terms
+
+This section says the same thing as the rest of the document for a reader who doesn't live in the stack. The technical sections remain the source of truth.
+
+*What we're building.* shadow-cljs turns ClojureScript into JavaScript and gives a live programming session against the running program. This fork lets that running program be Bun instead of Node, and keeps the Bun process alive for you while you work.
+
+*Why we do it this way.* The fork stays as close to upstream as it can, so pulling in new upstream versions stays cheap. Fixes to upstream code are kept small; the lint rule here counts only lines the fork changed.
+
+*The words that keep coming up.*
+- Managed runtime :: the Bun process the fork starts and stops alongside a watched build.
+- Worker :: shadow-cljs's per-build process that compiles and owns that runtime.
+- Relay :: shadow-cljs's internal message switchboard between the worker, editors and runtimes.
+
+*Where we are right now.* The latest round of fixes is done and saved. The project that depends on this fork, kiln, gets them only after a new release is published.
+
+* Detailed status
+
+** Managed-runtime follow-ups — DONE
+
+*Takeaway:* merged at =c1858fc4= on [2026-10-19 Mon]; the leftovers are decisions, listed under the pending and deferred rows.
+- Expected failures in the tests are captured and asserted instead of printed.
+- A fork-owned copy of shadow-http's websocket handler ends its write loop quietly when the peer dies mid-send; the worker also leaves the relay before killing its runtime.
+- node-repl under bun now loads its compiled files; node needs =npm install= in this checkout.
+- =api/watch= with a config map returns =:already-watching= for a running build, an upstream bug fixed in the fork.
+- The bun probe throws on anything but absence and does not cache a failure.
+
+** Release the fork for kiln — PENDING
+
+*Takeaway:* tmk's call; the procedure is in [[my:shadow-cljs/docs/clojars-publishing.org][the Clojars publishing doc]].
+- Until a release, a CIDER session on kiln's =:dev= build needs =(shadow.cljs.devtools.api/repl :dev)= once to start Bun.
+
+** CI for the =src/repl= tests — PENDING
+
+*Takeaway:* decide whether a CI job should run =shadow.cljs.managed-runtime-test= and its siblings.
+- They need a running shadow-cljs server and bun; locally they run through a scratch runner that starts the server.
+
+* Deferred & parked
+
+- *Guarded websocket handler's gaps* — see the todo.org item of that name. Proposing the guarded loop to shadow-http upstream would retire the fork's copy.
+- *Default watch printer drops reports* — =util/stdout-dump='s one-slot sliding buffer; upstream behaviour.
+- *The managed runtime's two known limitations* — rare; revisit if seen.
+
+* Where things live
+
+- *This doc* — live status.  *todo.org* — per-item tracker.  *CHANGELOG* — chronology (automated; don't hand-edit).
+- *doc/* — runtime architecture and usage.  *docs/superpowers/* — the March specs and plans.  *docs/clojars-publishing.org* — releasing and upstream sync.
+- *journal/* — session notes.
