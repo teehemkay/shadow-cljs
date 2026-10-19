@@ -6,11 +6,11 @@ This is the live status of the Bun fork of shadow-cljs, published as =org.clojar
 
 *Keep this document current.* Whenever an effort changes status, update the status board and that effort's section in the same change that does the work.
 
-Last updated: [2026-10-19 Mon 10:26] — The managed-runtime follow-ups are merged into =master= and pushed; every suite is green. The fix still reaches kiln only through a release, so the next step is tmk's call on cutting a new =-bun= version.
+Last updated: [2026-10-19 Mon 12:12] — The relay websocket now closes whenever its write loop ends, and the watch printer no longer drops failure reports; both are merged into =master= and pushed, and every suite is green. The fixes reach kiln only through a release, so the next step is tmk's call on cutting a new =-bun= version, or setting up CI first.
 
 * Where we are in the chain
 
-- *Managed-runtime follow-ups:* finished (merged). Remaining items are decisions or upstream work, not code in flight.
+- *Managed-runtime follow-ups:* finished (merged), the websocket gaps and the watch printer included. What remains is the release, CI, and upstream work.
 - *Next ritual:* a release, per [[my:shadow-cljs/docs/clojars-publishing.org][the Clojars publishing doc]], once tmk decides to cut one.
 
 * Status board
@@ -25,8 +25,9 @@ Legend: *DONE* shipped · *IN PROGRESS* actively building · *PAUSED* set aside 
 | Managed-runtime follow-ups              | *DONE*      | Quiet tests, guarded websocket, node-repl under bun, three reviews      |
 | Release the fork for kiln               | *PENDING*   | kiln still uses =3.4.11-bun= without the managed-runtime fix            |
 | CI for the =src/repl= tests             | *PENDING*   | Need a running server and bun; =lein test= skips them                   |
-| Guarded websocket handler's gaps        | *DEFERRED*  | Live-fault handling, blocked reader, access-denied; upstream candidate  |
-| Default watch printer drops reports     | *DEFERRED*  | Upstream behaviour; decide whether the fork changes it                  |
+| Relay websocket closes on loop end      | *DONE*      | No client left connected but deaf; faults logged; access-denied closes  |
+| Watch printer keeps failure reports     | *DONE*      | 1024-slot printer, ignored events filtered, dead printer lets go        |
+| Offer the handler to shadow-http        | *DEFERRED*  | Would retire the fork's copy; two shadow-http close limits to raise     |
 
 * In plain terms
 
@@ -54,6 +55,14 @@ This section says the same thing as the rest of the document for a reader who do
 - =api/watch= with a config map returns =:already-watching= for a running build, an upstream bug fixed in the fork.
 - The bun probe throws on anything but absence and does not cache a failure.
 
+** Relay websocket and watch printer — DONE
+
+*Takeaway:* merged on [2026-10-19 Mon] after three review rounds on the websocket work and one on the printer.
+- The fork's websocket handler closes the connection whenever its write loop ends: nothing for a departed peer, 1000 when the relay drops a client, and a logged fault with 1011 otherwise. Ending also releases a reader blocked on a full input channel.
+- The access-denied upgrade now says so and disconnects.
+- =util/stdout-dump= buffers 1024 printable messages, sliding, and closes its channel when its output disconnects.
+- Left for upstream: a peer that never answers a server close keeps its socket, and shadow-http answers its own close twice.
+
 ** Release the fork for kiln — PENDING
 
 *Takeaway:* tmk's call; the procedure is in [[my:shadow-cljs/docs/clojars-publishing.org][the Clojars publishing doc]].
@@ -66,8 +75,7 @@ This section says the same thing as the rest of the document for a reader who do
 
 * Deferred & parked
 
-- *Guarded websocket handler's gaps* — see the todo.org item of that name. Proposing the guarded loop to shadow-http upstream would retire the fork's copy.
-- *Default watch printer drops reports* — =util/stdout-dump='s one-slot sliding buffer; upstream behaviour.
+- *Offer the guarded handler to shadow-http* — an IDEA in todo.org; it also carries the two close limits the fork cannot reach.
 - *The managed runtime's two known limitations* — rare; revisit if seen.
 
 * Where things live
