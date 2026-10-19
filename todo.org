@@ -29,9 +29,8 @@ CLOSED: [2026-10-19 Mon 12:23]
 The fork had no CI at all; upstream's CircleCI config is not set up for this repository. =.github/workflows/ci.yml= now runs two GitHub Actions jobs on every push and pull request:
 
 - =lein-test= runs =lein test=.
-- =repl-tests= installs bun and runs the managed-runtime, js-runtime, bun-runtime and test-util suites through =shadow.cljs.server-test-runner=, which starts a server at =:info=.
-
-The first run matched the local counts exactly, so bun was present and nothing passed vacuously.
+- =repl-tests= installs bun and runs the managed-runtime, js-runtime, bun-runtime and test-util suites through =shadow.cljs.server-test-runner=, which starts a server at =:info=. It runs through lein's =:repl-tests= profile, so it tests the release's own dependencies; =deps.edn= has drifted from =project.clj= upstream.
+- =REQUIRE_BUN= is set there, so a runner without bun fails instead of passing every bun test vacuously.
 
 ** DONE The console REPL's managed-runtime path has no test
 CLOSED: [2026-10-18 Sun 22:05]
