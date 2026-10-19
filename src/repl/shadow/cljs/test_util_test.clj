@@ -30,3 +30,10 @@
         (is (true? (probe)))
         (is (true? (probe)))
         (is (= 2 @calls) "an answer, once had, is kept")))))
+
+(deftest a-required-program-that-is-missing-throws
+  ;; CI sets REQUIRE_BUN so a runner without bun fails instead of letting
+  ;; every bun-backed test pass vacuously
+  (is (thrown? clojure.lang.ExceptionInfo (#'tu/availability "bun" false true)))
+  (is (false? (#'tu/availability "bun" false false)))
+  (is (true? (#'tu/availability "bun" true true))))

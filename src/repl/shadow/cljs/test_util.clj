@@ -39,8 +39,18 @@
 (def ^:private bun-probe
   (probe "bun"))
 
+(defn- availability
+  "AVAILABLE?, unless PROGRAM is REQUIRED? and missing, which throws."
+  [program available? required?]
+  (if (or available? (not required?))
+    available?
+    (throw (ex-info (str program " is required but not on PATH") {:program program}))))
+
 (defn bun-available?
   "True when bun runs from the JVM's PATH; the Bun-backed tests pass
-  vacuously without it. Probed once per JVM."
+  vacuously without it. Probed once per JVM. With REQUIRE_BUN set to any
+  non-empty value, as CI sets it, a missing bun throws instead, so a
+  runner image that lost bun fails rather than passing every bun test
+  without running it."
   []
-  (bun-probe))
+  (availability "bun" (bun-probe) (seq (System/getenv "REQUIRE_BUN"))))
