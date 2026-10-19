@@ -101,7 +101,8 @@ Root cause: shadow-http's =CoreAsyncWebSocketHandler= write loop sends whatever 
 
 The fork now upgrades its relay websockets through =shadow.cljs.devtools.server.web.websocket=, a deliberate copy of upstream's handler whose write loop ends quietly when a send fails because the peer left, told apart from a live-connection fault by waiting for =onClose=. That covers both paths and any other kill-while-sending. Three whole-namespace runs afterwards carried none of the traces. Proposing the guarded loop to shadow-http upstream would let the copy go.
 
-** TODO The guarded websocket handler's remaining gaps
+** DONE The guarded websocket handler's remaining gaps
+CLOSED: [2026-10-19 Mon 10:50]
 :PROPERTIES:
 :CREATED:  [2026-10-19 Mon 07:25]
 :ID:       20261019T072556.442785
@@ -114,6 +115,22 @@ The fork now upgrades its relay websockets through =shadow.cljs.devtools.server.
 - *The access-denied upgrade.* =api-remote-relay= gives an untrusted client an unbuffered =ws-in= that nothing reads, so a frame it sends blocks the reader for good. The connection is never closed either. Predates the fork.
 
 Proposing the guarded loop to shadow-http upstream would fix every =ws-upgrade= caller and let the copy go.
+
+Fixed by one rule: the websocket closes whenever its write loop ends. The loop returns how it ended and =end-connection!= decides:
+
+- *Peer already gone:* nothing.
+- *Output closed by its owner:* =ws-out= closing gets a normal close (1000). This also disconnects every client the relay drops (ping timeout, =client-not-keeping-up=, a bad =:hello=, server stop), which upstream left connected but deaf.
+- *A fault:* a logged =send-failed= warning, =ws-in= closed so the relay drops the client, and an internal-error close (1011).
+
+The access-denied upgrade closes =ws-out= after its message and starts with =ws-in= closed. The blocked reader is left as is, since =onText='s backpressure is upstream's design; that case now ends in one logged warning and a clean disconnect. Upstreaming stays open as a separate idea.
+
+** IDEA Offer the guarded websocket handler to shadow-http upstream
+:PROPERTIES:
+:CREATED:  [2026-10-19 Mon 10:51]
+:ID:       20261019T105108.243880
+:END:
+
+=shadow.cljs.devtools.server.web.websocket= is a deliberate copy of shadow-http's =CoreAsyncWebSocketHandler= that differs only in its write loop and how the loop's end closes the connection. Upstream taking both would fix every =ws-upgrade= caller and let the fork drop the copy. Follows [[id:20261019T072556.442785][the guarded handler's remaining gaps]].
 
 ** TODO The default watch output can drop a build-failure report
 :PROPERTIES:
