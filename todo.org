@@ -37,3 +37,5 @@ Upstream =thheller/shadow-cljs= is 42 commits ahead of the fork's =3.4.11= base,
 [2026-10-19 Mon 13:15] Merged on branch =sync/upstream-3.5.7= as =4c9769e3=; =lein test= and the =repl-tests= suites pass locally. Only =project.clj= and =worker.clj= conflicted, and no UI rebuild is needed. Next: push the branch so CI checks it, merge to =master=, then release.
 
 The release notes should name one upstream behaviour change that upstream's changelog only calls "slightly improve compile trigger api": while a watch runs for the build, =shadow.cljs.devtools.api/compile= triggers a watch compile and returns =:ok= or =:error= rather than =:done=. The CLI's =compile= goes through =api/compile*= and is unaffected, and kiln, bunbushka and ik never call the API namespace, so only REPL code that checks for =:done= is exposed.
+
+[2026-10-19 Mon 14:05] Fast-forwarded =master= to the sync branch after CI passed both jobs. Next: release =3.5.7-bun= per [[my:shadow-cljs/docs/clojars-publishing.org::*Releasing a new version][the publishing doc's release steps]], with the =api/compile= note above in its release notes.
