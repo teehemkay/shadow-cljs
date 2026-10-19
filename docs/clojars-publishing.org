@@ -7,16 +7,16 @@ This is a fork of upstream =thheller/shadow-cljs=. The upstream Clojars group =t
 
 * Coordinates and versioning
 
-The artifact is =org.clojars.teehemkay/shadow-cljs=. Versions follow the scheme =<upstream-version>-bun=, which keeps the upstream base version visible while marking the artifact unambiguously as this fork (e.g. the first release was =3.3.7-bun=, cut from upstream =3.3.7=; the current release is =3.4.11-bun=, cut from upstream =3.4.11=). Released versions on Clojars are immutable: a published version can never be overwritten or deleted, so to re-release you bump the suffix.
+The artifact is =org.clojars.teehemkay/shadow-cljs=. Versions follow the scheme =<upstream-version>-bun=, which keeps the upstream base version visible while marking the artifact unambiguously as this fork (e.g. the first release was =3.3.7-bun=, cut from upstream =3.3.7=; the current release is =3.4.11-bun.2=, a re-release on upstream =3.4.11=). Released versions on Clojars are immutable: a published version can never be overwritten or deleted, so a re-release on the same upstream base numbers the suffix, =<upstream-version>-bun.N=, starting from =.2= since the first release on a base carries none.
 
 Consumers depend on it like any Clojars artifact (Clojars is a default repository for both tools.deps and Leiningen):
 
 #+begin_src clojure
 ;; deps.edn
-org.clojars.teehemkay/shadow-cljs {:mvn/version "3.4.11-bun"}
+org.clojars.teehemkay/shadow-cljs {:mvn/version "3.4.11-bun.2"}
 
 ;; Leiningen
-[org.clojars.teehemkay/shadow-cljs "3.4.11-bun"]
+[org.clojars.teehemkay/shadow-cljs "3.4.11-bun.2"]
 #+end_src
 
 * What the published jar contains
@@ -123,7 +123,7 @@ Producing the full-drop-in jar (one that ships the =localhost:9630= UI) reconstr
 
 2. UI npm deps. =cd packages/ui && npm install= (codemirror, react 16, xterm, etc.).
 
-3. Put grove =master= source on the =:cljs= classpath. *Temporarily* edit the =:cljs= profile in =project.clj=: comment out =[com.thheller/shadow-grove "0.5.0"]= and add =:source-paths ["../shadow-grove/src/main"]=. This is temporary because committing it would make every =+cljs= build (incl. CI) depend on the sibling checkout — revert it once the assets are written. (=lein install=/=deploy= does not activate =:cljs=, so the revert does not affect the jar, which reads the already-built assets from =src/ui-release=.)
+3. Put grove =master= source on the =:cljs= classpath. *Temporarily* edit the =:cljs= profile in =project.clj=: comment out =[com.thheller/shadow-grove "0.5.0"]= and add =:source-paths ["../shadow-grove/src/main"]=. This is temporary because committing it would make every =+cljs= build (incl. CI) depend on the sibling checkout — revert it once the assets are written. (=lein install= and =lein deploy= do not activate =:cljs=, so the revert does not affect the jar, which reads the already-built assets from =src/ui-release=.)
 
 4. CSS build → writes =src/ui-release/shadow/cljs/ui/dist/css/ui.css=:
 
