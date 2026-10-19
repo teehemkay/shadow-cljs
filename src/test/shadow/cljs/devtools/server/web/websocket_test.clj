@@ -92,12 +92,18 @@
     (async/>!! ws-out "a")
     (async/>!! ws-out "b")
     ;; the reader closes the compressor before onClose, so a send can fail
-    ;; with this before the close is announced
-    (let [result (future
+    ;; with this before the close is announced; the close follows here
+    ;; well after the failure, so the loop must wait for it
+    (let [failed (promise)
+          result (future
                    (ws/write-loop
-                     (connection events :send-text (fn [_] (throw (NullPointerException. "Deflater has been closed"))))
+                     (connection events :send-text (fn [_]
+                                                     (deliver failed true)
+                                                     (throw (NullPointerException. "Deflater has been closed"))))
                      ws-out
                      closed))]
+      @failed
+      (Thread/sleep 200)
       (deliver closed true)
       (is (= ::ws/peer-gone (deref result 5000 ::still-running)))
       (is (= [[:text "a"]] @events) "nothing is sent after the failure"))))
@@ -161,7 +167,9 @@
       (let [blocked-put (future (async/>!! ws-in "waiting"))]
         (Thread/sleep 50)
         (wrap #(ws/end-connection! (connection (atom [])) ws-in (promise) ending))
-        (is (not= ::blocked (deref blocked-put 1000 ::blocked)) (pr-str ending))))))
+        ;; true, not false: the put was waiting and was taken, rather than
+        ;; arriving after the close
+        (is (true? (deref blocked-put 1000 ::blocked)) (pr-str ending))))))
 
 (deftest a-close-that-cannot-be-sent-is-dropped
   ;; a connection whose writes fail usually fails the close frame as well

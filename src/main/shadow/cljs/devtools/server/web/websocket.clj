@@ -72,7 +72,9 @@
   [^WebSocketConnection connection status]
   (try
     (.sendClose connection status)
-    (catch Exception _)))
+    ;; Throwable, since after an Error fault the close can throw the same
+    ;; Error, and nothing is left to report it to
+    (catch Throwable _)))
 
 (defn- release-reader!
   "Closes WS-IN and drains it. shadow-http's reader puts each frame on WS-IN
