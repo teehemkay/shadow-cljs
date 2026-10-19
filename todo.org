@@ -1,10 +1,12 @@
-* DONE The managed runtime, worker-owned — follow-ups [5/10]
+* DONE The managed runtime, worker-owned — follow-ups [9/9]
 CLOSED: [2026-10-19 Mon 13:11]
 :PROPERTIES:
 :CREATED:  [2026-10-18 Sun 19:54]
 :ID:       20261018T195432.416080
 :END:
 :BACKLINKS:
+- [[id:20261019T105108.243880][Offer the guarded websocket handler to shadow-http upstream]]
+- [[id:20261018T195432.672778][The managed runtime's two known limitations]]
 - [[id:20261018T195432.377522][The spike skill — implementation record]]
 :END:
 
@@ -16,6 +18,9 @@ CLOSED: [2026-10-19 Mon 13:11]
 :CREATED:  [2026-10-18 Sun 19:54]
 :ID:       20261018T195432.623154
 :END:
+:BACKLINKS:
+- [[id:20261018T195432.377522][The spike skill — implementation record]]
+:END:
 
 kiln uses the published =org.clojars.teehemkay/shadow-cljs= =3.4.11-bun= jar, so the fix reaches it only through a merge and a new release, or a local install under another version. Until then, a CIDER session on kiln's =:dev= build needs =(shadow.cljs.devtools.api/repl :dev)= evaluated once to start Bun. tmk's call. From [[my:agent-skills/docs/implementations/2026/2026-10/2026-10-06-spike-skill-implementation.org::#session-1][the spike skill's implementation record, session 1]].
 
@@ -26,6 +31,9 @@ CLOSED: [2026-10-19 Mon 12:23]
 :PROPERTIES:
 :CREATED:  [2026-10-18 Sun 19:54]
 :ID:       20261018T195432.633463
+:END:
+:BACKLINKS:
+- [[id:20261018T195432.377522][The spike skill — implementation record]]
 :END:
 
 =shadow.cljs.managed-runtime-test=, =js-runtime-test= and =bun-runtime-test= live in =src/repl=, which =project.clj='s =:test-paths ["src/test"]= never runs, so CI does not cover them. They need a running server and bun, which is why the fork keeps them there; decide whether a CI job should run them. From [[my:agent-skills/docs/implementations/2026/2026-10/2026-10-06-spike-skill-implementation.org::#session-1][the spike skill's implementation record, session 1]].
@@ -118,6 +126,9 @@ CLOSED: [2026-10-19 Mon 10:50]
 :CREATED:  [2026-10-19 Mon 07:25]
 :ID:       20261019T072556.442785
 :END:
+:BACKLINKS:
+- [[id:20261019T105108.243880][Offer the guarded websocket handler to shadow-http upstream]]
+:END:
 
 =shadow.cljs.devtools.server.web.websocket= ends its write loop quietly only when a failed send is followed by =onClose= within a second. Two code reviews of =wip/managed-runtime-follow-ups= found cases it leaves as upstream's handler did:
 
@@ -154,6 +165,9 @@ The fork changes it, with =shadow.cljs.devtools.server.util-test= covering each 
 :PROPERTIES:
 :CREATED:  [2026-10-18 Sun 19:54]
 :ID:       20261018T195432.672778
+:END:
+:BACKLINKS:
+- [[id:20261018T195432.377522][The spike skill — implementation record]]
 :END:
 
 Recorded in the architecture doc's lifecycle section: the process is held only in the worker's immutable state, so a later step in the same loop message that throws loses the reference and orphans the process; and an eval waiting in the connect window when the worker stops reports the destroyed process as having exited with code 143. Both rare; revisit if either is seen. From [[my:agent-skills/docs/implementations/2026/2026-10/2026-10-06-spike-skill-implementation.org::#session-1][the spike skill's implementation record, session 1]].
