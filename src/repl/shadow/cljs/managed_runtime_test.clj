@@ -106,11 +106,11 @@
   expected failure report rather than dump it. Every other message, an
   unexpected failure included, is printed with api/watch's own printer.
 
-  Duplicates util/stdout-dump's drain loop on purpose: stdout-dump reads
-  through a one-slot sliding buffer that drops a message the next one
-  overtakes, and a test's expected report can be the one dropped. The buffer
-  here keeps every message without making the worker, whose output mult
-  waits on every tap, wait on the printing. Unlike stdout-dump, it keeps
+  Duplicates util/stdout-dump's drain loop on purpose: stdout-dump prints
+  every message and may, under a long enough stall, drop the oldest, while a
+  test must intercept its expected report and can afford to lose none. The
+  fixed buffer here keeps every message without making the worker, whose
+  output mult waits on every tap, wait on the printing. Unlike stdout-dump, it keeps
   draining after the printer reports a closed output stream: a sliding
   buffer never blocks its writer, but this one would, once full, block the
   worker."

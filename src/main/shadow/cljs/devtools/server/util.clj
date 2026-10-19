@@ -209,8 +209,13 @@
       true)))
 
 (defn stdout-dump [verbose]
+  ;; sliding, so a stalled printer never makes the worker, whose output mult
+  ;; waits on every tap, wait too. one slot dropped whatever the next message
+  ;; overtook while the previous one printed, a build failure included; 1024
+  ;; absorbs a compile's bursts and only drops the oldest under a printer
+  ;; stalled that long
   (let [chan
-        (-> (async/sliding-buffer 1)
+        (-> (async/sliding-buffer 1024)
             (async/chan))]
 
     (async/go
