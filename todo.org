@@ -33,6 +33,33 @@ Recorded in the architecture doc's lifecycle section: the process is held only i
 
 Split out of [[id:20261018T195432.416080][the managed-runtime follow-ups]], so that umbrella can close once the fork is released.
 
+* IDEA Drop the managed runtime and keep only the =:js-runtime= selector
+:PROPERTIES:
+:CREATED:  [2026-10-24 Sat 17:40]
+:ID:       20261024T174047.298693
+:END:
+
+Decide at the next upstream sync, when the managed runtime's cost shows up again. Surveyed on [2026-10-24 Sat], after [[id:20261021T185802.026641][the first-compile runtime bug]].
+
+*What it costs.* Of the fork's ~575 added lines in =src/main= since its last upstream merge (=f2fbb3a9=):
+- ~295 are the managed runtime itself: =worker.clj= +89, =worker/impl.clj= +149, =js_runtime.clj= +28, ~25 of =repl_impl.clj=.
+- ~150 are the guarded websocket handler, which [[orgit-rev:~/dev/my/shadow-cljs::bd4c8e799254ff1d469a035caa5fcd75eb45fe46][bd4c8e79]] added because the managed runtime makes a peer dying mid-send routine.
+- ~130 are the selector: config key, CLI flag, =:node-test= autorun, =node-repl= argv.
+- It also took every October review round, the 3.5.7 sync's =worker.clj= conflict, [[id:20261018T195432.672778][the two known limitations]], and the first-compile bug.
+
+*What it buys.* =(shadow/repl :dev)= with no manual =bun out/dev.js=, and diagnostics with the log tail when the process exits or never connects.
+
+*Who relies on it, in writing.*
+- kiln's, ik's and bunbushka's =CLAUDE.md= hard gates (ik's =AGENTS.md= too): "do NOT manually run =bun out/dev.js=".
+- bunbushka's =templates/project/CLAUDE.md=.
+- agent-skills' =cljs-repl-development= skill.
+- =bd org spike-verify='s ClojureScript sessions.
+
+*Dropping it means.*
+- Each consumer's =bb dev= starts Bun itself after the first build, and those docs are rewritten.
+- Unchecked: whether shadow's node client retries when Bun starts before the server is ready, which decides how simple that start can be.
+- The early-eval problem moves to whoever starts Bun. Tools wait for a runtime themselves, which upstream's contract already expects.
+
 * IDEA Offer the guarded websocket handler to shadow-http upstream
 :PROPERTIES:
 :CREATED:  [2026-10-19 Mon 10:51]
