@@ -1,0 +1,51 @@
+#+TITLE: The first-compile wait comes back, bounded per eval
+#+DATE: [2026-10-24 Sat 17:41]
+#+AUTHOR: Claude Code (claude-opus-5-5)
+#+PROJECT: shadow-cljs
+
+* Context
+
+Context: [[id:20261021T185802.026641][an eval during a build's first compile gets no managed runtime]] (debugging, fix merged to =master= locally, before the push).
+Triggered by tmk's go-ahead to merge =wip/first-compile-wait=, with a journal entry first.
+
+The bug reached this repo from kiln, where it was filed after agent-skills' ClojureScript session test went red on every run from [2026-10-19 Mon]. The session started in kiln, reproduced it there, and followed it here. =master= now carries [[orgit-rev:~/dev/my/shadow-cljs::c626dec23f5016ea5423a9e0a493c67ec2f11338][c626dec2]] (the fix), [[orgit-rev:~/dev/my/shadow-cljs::cc94b1196dba9ba8ac386fd9c7bd65261a45501d][cc94b119]] (test hardening), [[orgit-rev:~/dev/my/shadow-cljs::3f0ee6b41b3149a2cfb003522231802f737c1c97][3f0ee6b4]] (docs) and two =todo.org= commits. Not released; kiln is still on =3.5.7-bun=.
+
+* Project Notes
+
+** What broke
+
+=bd org spike-verify= selects a build the instant =.shadow-cljs/nrepl.port= appears, so its first evals land during the first compile. Before the first compile ends, =:managed-runtime= is nil, and =await-managed-runtime= treated nil as "not a managed build" and returned at once. [[orgit-rev:~/dev/my/shadow-cljs::3806490da122cf409c54081c5d994068af91f9aa][3806490d]] had removed the pre-compile wait on purpose; nobody recorded what that cost.
+
+The evidence that settled it was one single-session nREPL probe, run against a cold copy of kiln with only the fork jar varied:
+- =3.4.11-bun= answered from Bun, 3 of 3.
+- =3.5.7-bun= failed at once, 3 of 3.
+- The fix, via =:local/root=, answered, 3 of 3.
+
+The npm launcher and =node_modules= were the same in every run, which cleared kiln's pnpm reinstall.
+
+** Key Decisions
+
+- *An unconditional pre-compile wait, up to 5 s from each eval.* Gating it on "is this build managed" needs the merged config. =:start-autobuild= runs configure and compile in one loop message, and =state-ref= changes only between messages, so the gate would have to restate =build/configure='s merge chain. That is the guesswork 3806490d rejected.
+- *No busy signal.* Counting the wait from the compile's start would fix three limits: per-form cost in a region, first compiles over 5 s, and never-compiled builds. It needs an atom in the worker state set around configure and compile, about 8 lines inside upstream functions. Weighed and not built; the limits are documented instead.
+- *Keep the managed runtime for now.* A survey put it at ~295 of the fork's ~575 =src/main= lines, plus ~150 for the websocket handler it made necessary. Filed as an IDEA to decide at the next upstream sync.
+- *The verifier should wait for a runtime itself.* That is upstream's own contract, and it removes the dependence on compile length. Handed to the agent-skills session by message.
+
+** Conversation Excerpts
+
+#+begin_quote
+tmk: Why does the fork makes that promise? Should that be the thing to revisit?
+#+end_quote
+
+* Technical Insights
+
+** A synchronous test fixture can hide a whole class of timing bug
+
+Every managed-runtime test watched with =:sync true=, so every eval ran after the first compile. The suite was green through a regression that every real tool caller hit. When a fixture waits for something, ask which caller does not wait, and write one test that calls the way that caller does.
+
+** A RED that a stub could also produce is not a RED
+
+The hardened test first asserted that =await-managed-runtime= returned nil after a 60 s window. The old code also returned nil, immediately, so the assertion could not tell the two apart. Asserting that a runtime is connected when the wait returns can. Running the new tests against =master='s =worker.clj= confirmed they fail there.
+
+** A loop that publishes state only between messages cannot be watched mid-message
+
+The worker's =server-thread= loop calls =vreset!= on =state-ref= at the top of each turn. Any long handler, configure plus compile here, is invisible to other threads until it returns. A reader that needs "busy right now" has to get it through an object whose identity is fixed before the handler starts, such as an atom placed in the state at worker start.
