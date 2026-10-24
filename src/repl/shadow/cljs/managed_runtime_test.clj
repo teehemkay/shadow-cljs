@@ -20,6 +20,7 @@
     [shadow.cljs.devtools.server.repl-impl :as repl-impl]
     [shadow.cljs.devtools.server.runtime :as runtime]
     [shadow.cljs.devtools.server.util :as util]
+    [shadow.cljs.devtools.server.worker :as worker]
     [shadow.cljs.devtools.server.worker.impl :as impl]
     [shadow.cljs.test-util :refer [bun-available?]]
     [shadow.jvm-log :as log])
@@ -236,6 +237,41 @@
     {:config-merge [{:js-runtime :bun}]}
     (fn [{:keys [build-id]}]
       (is (= {:out "true\n"} (eval-after-select build-id bun-check))))))
+
+(deftest an-eval-during-the-first-compile-waits-for-the-runtime
+  ;; A tool may select the build and evaluate as soon as the watch's nREPL
+  ;; port is written, while the first compile is still running. Every other
+  ;; test here watches with :sync true, which hides this. Deleting the
+  ;; build's cache keeps the compile slow enough for the eval to land in it.
+  (let [build-id :managed-probe-first-compile]
+    (doseq [f (reverse (file-seq (io/file (get-in (runtime/get-instance!) [:config :cache-root])
+                                          "builds" (name build-id))))]
+      (io/delete-file f true))
+    (with-watched-build (script-config build-id) {:sync false}
+      (fn [_]
+        (is (nil? (:last-build-provides (worker-state build-id)))
+            "the eval below is sent before the first compile ends")
+        (is (= {:out "true\n"} (eval-after-select build-id bun-check)))))))
+
+(defn- fake-worker
+  "A worker whose state is STATE, for await-managed-runtime, which reads
+  only the state and never the worker's loop."
+  [state]
+  {::impl/proc true
+   :build-id :managed-probe-fake
+   :state-ref (volatile! (merge {:build-config (script-config :managed-probe-fake)} state))})
+
+(deftest a-first-compile-that-outlasts-the-wait-is-named
+  (let [[message ms] (timed #(worker/await-managed-runtime (fake-worker {}) 300))]
+    (is (= "build :managed-probe-fake has not finished a successful compile yet\n" message))
+    (is (<= 300 ms 2000) "it waited out the window, and no longer")))
+
+(deftest a-failed-first-compile-is-not-waited-for
+  ;; The compile's own failure report says why; the REPL's generic message
+  ;; follows it.
+  (let [[message ms] (timed #(worker/await-managed-runtime (fake-worker {:failure-data nil}) 5000))]
+    (is (nil? message))
+    (is (< ms 1000))))
 
 (deftest a-build-without-the-repl-client-starts-no-runtime
   ;; A :node-test build that is not :ui-driven runs its whole suite and

@@ -104,6 +104,17 @@
   no managed process (the REPL's generic message applies), else the
   message.
 
+  Before the build's first successful compile it also waits, up to
+  timeout-ms from the call, since the process can only start after one. A
+  tool that selects the build as soon as the watch's nREPL port is written
+  evaluates during that compile. Whether the build is managed is unknown
+  until the compile ends: configure and compile run in one loop message, so
+  the state holds only the raw build config, while --js-runtime arrives
+  through :config-merge. The wait is therefore paid by any build without a
+  runtime evaluated that early, managed or not; such an eval would fail
+  either way. Predicting the merged config instead would restate
+  build/configure's merge chain.
+
   Reads only the worker's state and never asks its loop for anything, so it
   cannot block on a worker that is busy, stopped or failed to launch, and is
   safe on the worker's own thread (a build hook calling cljs-eval), where it
@@ -113,13 +124,28 @@
    (await-managed-runtime worker impl/managed-runtime-connect-ms))
   ([{:keys [state-ref build-id] :as worker} timeout-ms]
    {:pre [(impl/proc? worker)]}
-   (let [window-ns (.toNanos java.util.concurrent.TimeUnit/MILLISECONDS timeout-ms)]
+   (let [window-ns (.toNanos java.util.concurrent.TimeUnit/MILLISECONDS timeout-ms)
+         called-at (System/nanoTime)]
      (loop []
-       (let [{:keys [default-runtime-id managed-runtime build-state build-config]} @state-ref
+       (let [{:keys [default-runtime-id managed-runtime build-state build-config last-build-provides] :as state} @state-ref
              {:keys [^Process process error started-at log-file]} managed-runtime
              runtime (name (target-shared/js-runtime (or (:shadow.build/config build-state) build-config)))]
          (cond
-           (or default-runtime-id (nil? managed-runtime))
+           default-runtime-id
+           nil
+
+           ;; only a successful compile sets :last-build-provides, and
+           ;; build-failure stores :failure-data, whose report already says
+           ;; why there is nothing to run
+           (and (nil? managed-runtime)
+                (nil? last-build-provides)
+                (not (contains? state :failure-data)))
+           (if (< (- (System/nanoTime) called-at) window-ns)
+             (do (Thread/sleep 50)
+                 (recur))
+             (format "build %s has not finished a successful compile yet\n" build-id))
+
+           (nil? managed-runtime)
            nil
 
            error

@@ -65,12 +65,15 @@ Cursive), the console REPL or `shadow/cljs-eval`.
   a `--- bun runtime started ---` line, so an earlier run's crash stays
   readable. Before each start, a log past 1 MB is set aside as `<log>.1`;
   one long-running chatty process can still grow it.
-- **An evaluation never starts it.** One that finds no runtime waits only for
-  a new process to connect, at most 5 seconds from that process's start, so a
-  region of forms pays the wait once. Otherwise it says at once why there is
-  none: the launch error, that the process exited (with its code), or that it
-  is running but not connected — each with the end of that run's output,
-  printed once for a region of forms.
+- **An evaluation never starts it.** One that finds no runtime waits for a
+  new process to connect, at most 5 seconds from that process's start, so a
+  region of forms pays the wait once. Before the build's first successful
+  compile it also waits up to 5 seconds for that compile, so a tool that
+  evaluates as soon as the watch's nREPL port appears still reaches the
+  process. Otherwise it says at once why there is none: that no compile has
+  succeeded yet, the launch error, that the process exited (with its code), or
+  that it is running but not connected — the last three with the end of that
+  run's output, printed once for a region of forms.
 - **Stopping it** (the watch stops, or the build is no longer managed) sends
   SIGTERM, then a forced kill after 2 seconds, since the bootstrap keeps the
   event loop alive and a `:main` that handles SIGTERM would otherwise linger.

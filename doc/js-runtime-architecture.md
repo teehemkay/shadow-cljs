@@ -122,11 +122,25 @@ Every REPL frontend evaluates through `repl-impl/do-repl` (nREPL, stdin, prepl,
 `api/cljs-eval`), and none of them starts the process. When an eval finds no
 runtime, `worker/await-managed-runtime` reads the worker's state — never sending
 the loop a message, so it cannot block on a busy, stopped or failed worker, and
-is safe on the worker's own thread. It waits only while a new process is within
-5 s of its `:started-at`, so a region of forms against one that cannot connect
-pays the wait once. Otherwise it returns why there is none — the launch error,
-the exit code, or that the process is running but not connected, each with the
-end of the current run's output after the last run marker — which `do-repl`
+is safe on the worker's own thread. It waits in two cases:
+
+- **Before the build's first successful compile**, up to 5 s from the eval,
+  since the process starts only after one. A tool that selects the build as
+  soon as the watch's nREPL port is written evaluates during that compile.
+  Configure and compile run in one loop message, so until it ends the state
+  holds only the raw build config and cannot say whether the build is managed
+  (`--js-runtime` arrives through `:config-merge`). Any build without a runtime
+  evaluated that early pays the wait, managed or not; that eval would fail
+  either way. Predicting the merged config instead would restate
+  `build/configure`'s merge chain. A failed compile ends the wait, since its
+  report already says why.
+- **While a new process is within 5 s of its `:started-at`**, so a region of
+  forms against one that cannot connect pays the wait once.
+
+Otherwise it returns why there is none — that no compile has succeeded yet,
+the launch error, the exit code, or that the process is running but not
+connected, the last three with the end of the current run's output after the
+last run marker — which `do-repl`
 prints in place of the generic "No available JS runtime". Within one input, a
 form that gets the same reason as the one before prints only its first line,
 so a region of forms does not repeat the log tail.
