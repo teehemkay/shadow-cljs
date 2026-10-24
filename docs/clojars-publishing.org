@@ -7,16 +7,16 @@ This is a fork of upstream =thheller/shadow-cljs=. The upstream Clojars group =t
 
 * Coordinates and versioning
 
-The artifact is =org.clojars.teehemkay/shadow-cljs=. Versions follow the scheme =<upstream-version>-bun=, which keeps the upstream base version visible while marking the artifact unambiguously as this fork (e.g. the first release was =3.3.7-bun=, cut from upstream =3.3.7=; the current release is =3.4.11-bun.2=, a re-release on upstream =3.4.11=). Released versions on Clojars are immutable: a published version can never be overwritten or deleted, so a re-release on the same upstream base numbers the suffix, =<upstream-version>-bun.N=, starting from =.2= since the first release on a base carries none.
+The artifact is =org.clojars.teehemkay/shadow-cljs=. Versions follow the scheme =<upstream-version>-bun=, which keeps the upstream base version visible while marking the artifact unambiguously as this fork (e.g. the first release was =3.3.7-bun=, cut from upstream =3.3.7=; the current release is =3.5.7-bun.2=, a re-release on upstream =3.5.7=). Released versions on Clojars are immutable: a published version can never be overwritten or deleted, so a re-release on the same upstream base numbers the suffix, =<upstream-version>-bun.N=, starting from =.2= since the first release on a base carries none.
 
 Consumers depend on it like any Clojars artifact (Clojars is a default repository for both tools.deps and Leiningen):
 
 #+begin_src clojure
 ;; deps.edn
-org.clojars.teehemkay/shadow-cljs {:mvn/version "3.4.11-bun.2"}
+org.clojars.teehemkay/shadow-cljs {:mvn/version "3.5.7-bun.2"}
 
 ;; Leiningen
-[org.clojars.teehemkay/shadow-cljs "3.4.11-bun.2"]
+[org.clojars.teehemkay/shadow-cljs "3.5.7-bun.2"]
 #+end_src
 
 * What the published jar contains

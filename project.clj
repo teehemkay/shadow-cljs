@@ -1,4 +1,4 @@
-(defproject org.clojars.teehemkay/shadow-cljs "3.5.7-bun"
+(defproject org.clojars.teehemkay/shadow-cljs "3.5.7-bun.2"
   :description "CLJS development tools"
   :url "https://github.com/teehemkay/shadow-cljs"
   :license {:name "Eclipse Public License"
