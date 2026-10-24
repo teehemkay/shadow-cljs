@@ -6,13 +6,13 @@ This is the live status of the Bun fork of shadow-cljs, published as =org.clojar
 
 *Keep this document current.* Whenever an effort changes status, update the status board and that effort's section in the same change that does the work.
 
-Last updated: [2026-10-24 Sat 17:45] — The first-compile wait fix is on =master=, pushed, CI green. Next: release it and move kiln to the release, so the verifier's ClojureScript sessions work again.
+Last updated: [2026-10-24 Sat 19:27] — =3.5.7-bun.2= is live on Clojars with the first-compile wait, and kiln is on it, pushed. Nothing in flight; the deferred items are what remains.
 
 * Where we are in the chain
 
 - *Upstream 3.5.7 sync:* finished and released as =3.5.7-bun=.
 - *Consumers:* kiln, ik, bunbushka and organon are on 3.5.7, pushed to each =main=. kiln's and ik's working checkouts need =bun install= when they next switch to =main=.
-- *First-compile wait:* merged and pushed, not released. The release and kiln's bump come next.
+- *First-compile wait:* released as =3.5.7-bun.2=; kiln is on it. ik and bunbushka are still on =3.5.7-bun=, and need the bump only if a tool evaluates during their first compile.
 
 * Status board
 
@@ -22,7 +22,7 @@ Legend: *DONE* shipped · *IN PROGRESS* actively building · *PAUSED* set aside 
 |----------------------------------+---------------+-------------------------------------------------------------------|
 | Sync to upstream 3.5.7           | *DONE*        | Released as =3.5.7-bun=; two conflicts, CI green                  |
 | Consumers on the fork's latest   | *DONE*        | kiln, ik, bunbushka on =3.5.7-bun=; organon on npm =3.5.7=        |
-| First-compile wait               | *IN PROGRESS* | On =master=; release and kiln bump pending                        |
+| First-compile wait               | *DONE*        | Released as =3.5.7-bun.2=; kiln on it, verifier test green        |
 | Runtime's two known limitations  | *DEFERRED*    | Orphaned process on a throwing step; exit 143 on a stopped worker |
 | Drop the managed runtime?        | *DEFERRED*    | IDEA, surveyed; decide at the next upstream sync                  |
 | Offer the handler to shadow-http | *DEFERRED*    | Would retire the fork's copy; two shadow-http close limits        |
@@ -40,7 +40,7 @@ This section says the same thing as the rest of the document for a reader who do
 - Worker :: shadow-cljs's per-build process that compiles and owns that runtime.
 - Upstream sync :: merging the original project's newer releases into the fork.
 
-*Where we are right now.* The fork is on the original project's newest version and every project uses it. A bug that made a tool's first commands fail while the program was still building is fixed but not yet published.
+*Where we are right now.* The fork is on the original project's newest version and every project uses it. A bug that made a tool's first commands fail while the program was still building is fixed and published.
 
 * Detailed status
 
@@ -60,9 +60,9 @@ This section says the same thing as the rest of the document for a reader who do
 - organon's extension: upstream npm 2.28 to =3.5.7=. Its two browser bundles still advanced-compile without the polyfills 3.x dropped.
 - Each repo's gates matched a baseline run on its =main=.
 
-** First-compile wait — IN PROGRESS
+** First-compile wait — DONE
 
-*Takeaway:* an eval that arrives during a build's first compile now waits for the managed runtime instead of failing. Merged and pushed on [2026-10-24 Sat], CI green; release and kiln's bump are next. Tracked in [[id:20261021T185802.026641][todo.org]].
+*Takeaway:* an eval that arrives during a build's first compile now waits for the managed runtime instead of failing. Released as =3.5.7-bun.2= on [2026-10-24 Sat]; kiln moved to it, and agent-skills' ClojureScript session test passes again. Tracked in [[id:20261021T185802.026641][todo.org]].
 - *Bug.* Since =3.5.7-bun=, =bd org spike-verify='s ClojureScript sessions on kiln got "No available JS runtime": they evaluate during the first compile, and =await-managed-runtime= returned at once when no process existed yet.
 - *Fix.* The eval waits up to 5 s for the first successful compile, then for the process as before. The docs state the limits: the window counts per eval, so a longer first compile still fails and a never-compiled build costs every eval 5 s.
 - *Not built.* A busy signal that would count from the compile's start; weighed and set aside. The verifier is to wait for a runtime itself, handed to the agent-skills session.

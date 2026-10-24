@@ -1,5 +1,6 @@
 
-* ONIT An eval during a build's first compile gets no managed runtime
+* DONE An eval during a build's first compile gets no managed runtime
+CLOSED: [2026-10-24 Sat 19:27]
 :PROPERTIES:
 :CREATED: [2026-10-21 Wed 18:58]
 :ID: 20261021T185802.026641
@@ -8,7 +9,7 @@
 - [[id:20261019T165529.344602][The ClojureScript session test runs against kiln's live checkout]]
 :END:
 
-Next: merge =wip/first-compile-wait=, release it, move kiln to the release, and rerun agent-skills' [[id:20261019T165529.344602][ClojureScript session test]], which should then pass.
+*Fixed in =3.5.7-bun.2= [2026-10-24 Sat]:* released from [[orgit-rev:~/dev/my/shadow-cljs::3e6d24ab1c03f27ef2a3bfa52f0a18b1ab8e59a2][3e6d24ab]] and published on Clojars; kiln moved to it at [[orgit-rev:~/dev/my/kiln::a6dd5f1749f98cf6a5919997923e8f357bf1246f][a6dd5f17]]. agent-skills' [[id:20261019T165529.344602][ClojureScript session test]] passes against kiln on the release.
 
 - *Symptom.* Since kiln moved to =3.5.7-bun= ([[orgit-rev:~/dev/my/kiln::8d4b7eb15e2d6caa270bc22e0d9e96704d0e12e0][8d4b7eb1]]) on [2026-10-19 Mon], every ClojureScript block that =bd org spike-verify= runs against a copy of kiln gets "No available JS runtime". kiln's own interactive sessions were unaffected.
 - *Cause.* The verifier selects the build as soon as the watch writes its nREPL port, so it evaluates during the first compile. The worker starts the managed process only after a compile, and =await-managed-runtime= returned at once when it found no process. [[orgit-rev:~/dev/my/shadow-cljs::3806490da122cf409c54081c5d994068af91f9aa][3806490d]] had removed the pre-compile wait of [[orgit-rev:~/dev/my/shadow-cljs::fd04ba4be06f61b1d84bbf2bed8067d7e75f28a3][fd04ba4b]]. The suite missed it because every test watched with =:sync true=.
