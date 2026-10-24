@@ -133,7 +133,8 @@ is safe on the worker's own thread. It waits in two cases:
   evaluated that early pays the wait, managed or not; that eval would fail
   either way. Predicting the merged config instead would restate
   `build/configure`'s merge chain. A failed compile ends the wait, since its
-  report already says why.
+  report already says why. The connect wait below follows it, so such an eval
+  can take close to 10 s.
 - **While a new process is within 5 s of its `:started-at`**, so a region of
   forms against one that cannot connect pays the wait once.
 

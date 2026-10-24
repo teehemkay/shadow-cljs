@@ -242,7 +242,10 @@
   ;; A tool may select the build and evaluate as soon as the watch's nREPL
   ;; port is written, while the first compile is still running. Every other
   ;; test here watches with :sync true, which hides this. Deleting the
-  ;; build's cache keeps the compile slow enough for the eval to land in it.
+  ;; build's cache keeps the compile slow enough to wait through. The wait
+  ;; is called directly with a long window, because a cold compile on a
+  ;; loaded machine can outlast the 5 s an eval gets, which the fake-worker
+  ;; test below covers.
   (let [build-id :managed-probe-first-compile]
     (doseq [f (reverse (file-seq (io/file (get-in (runtime/get-instance!) [:config :cache-root])
                                           "builds" (name build-id))))]
@@ -250,7 +253,10 @@
     (with-watched-build (script-config build-id) {:sync false}
       (fn [_]
         (is (nil? (:last-build-provides (worker-state build-id)))
-            "the eval below is sent before the first compile ends")
+            "the wait below starts before the first compile ends")
+        (is (nil? (worker/await-managed-runtime (api/get-worker build-id) 60000)))
+        (is (seq (api/repl-runtimes build-id))
+            "it returned only once the process had connected")
         (is (= {:out "true\n"} (eval-after-select build-id bun-check)))))))
 
 (defn- fake-worker

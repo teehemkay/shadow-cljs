@@ -70,7 +70,8 @@ Cursive), the console REPL or `shadow/cljs-eval`.
   region of forms pays the wait once. Before the build's first successful
   compile it also waits up to 5 seconds for that compile, so a tool that
   evaluates as soon as the watch's nREPL port appears still reaches the
-  process. Otherwise it says at once why there is none: that no compile has
+  process; with the connect wait after it, such an eval can take close to
+  10 seconds. Otherwise it says at once why there is none: that no compile has
   succeeded yet, the launch error, that the process exited (with its code), or
   that it is running but not connected — the last three with the end of that
   run's output, printed once for a region of forms.
