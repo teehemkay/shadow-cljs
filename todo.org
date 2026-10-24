@@ -34,6 +34,20 @@ Recorded in the architecture doc's lifecycle section: the process is held only i
 
 Split out of [[id:20261018T195432.416080][the managed-runtime follow-ups]], so that umbrella can close once the fork is released.
 
+* TODO The fork reports its version as =<snapshot>=
+:PROPERTIES:
+:CREATED:  [2026-10-25 Sun 00:00]
+:ID:       20261025T000046.449327
+:END:
+
+Next: decide which pom path the two =find-version= functions look up, and change both together.
+
+- *Symptom.* The server banner prints =shadow-cljs - server version: <snapshot>=, and =shadow-cljs info= on a deps.edn or lein project prints =shadow-cljs version: <snapshot>=. Seen on [2026-10-24 Sat] with =3.5.7-bun= and =3.5.7-bun.2= in ik, bunbushka and bd scaffold runs.
+- *Cause.* =shadow.cljs.devtools.server.util/find-version= and =shadow.cljs.devtools.cli-info/find-version= read the version from =META-INF/maven/thheller/shadow-cljs/pom.xml= and fall back to =<snapshot>= when it is missing. The fork publishes as =org.clojars.teehemkay/shadow-cljs=, so its jar ships =META-INF/maven/org.clojars.teehemkay/shadow-cljs/pom.xml= instead.
+- *Reproduced* before filing: =clojure -M -m shadow.cljs.devtools.cli-info= printed =<snapshot>= against both jars, and =server.util/find-version= returned =<snapshot>= on =3.5.7-bun.2=, whose classpath carries only the fork's pom.
+- The same value reaches =/api/project-info= through =server.util/project-info=.
+- The two functions are copies: =cli-info= keeps its own to stay lean and fast to start, as its comment says.
+
 * IDEA Drop the managed runtime and keep only the =:js-runtime= selector
 :PROPERTIES:
 :CREATED:  [2026-10-24 Sat 17:40]
@@ -75,4 +89,19 @@ Two limits of shadow-http itself, which the fork cannot reach through =WebSocket
 - *The reader answers a close it initiated.* =WebSocketExchange.process= calls =sendClose= on every close frame it reads, so the peer's reply to a server close gets a second close frame, which RFC 6455 section 5.5.1 does not ask for. Follows [[id:20261019T072556.442785][the guarded handler's remaining gaps]].
 
 Split out of [[id:20261018T195432.416080][the managed-runtime follow-ups]], so that umbrella can close once the fork is released.
+
+* IDEA A same-base re-release installs locally before its release commit
+:PROPERTIES:
+:CREATED:  [2026-10-25 Sun 00:00]
+:ID:       20261025T000046.453101
+:END:
+
+Next: decide whether [[my:shadow-cljs/docs/clojars-publishing.org::*Releasing a new version][the publishing doc's release steps]] should commit the version bump before =lein install=, or say that the local install shadows the Clojars artifact on the release machine.
+
+- *What happens.* Step 3 runs =lein install= while step 1's version bump is still uncommitted, so the installed pom records the commit before the release commit. =lein deploy= then publishes from the release commit and leaves =~/.m2= alone. Every consumer on the release machine keeps resolving the local install, whose =_remote.repositories= entries name no repository.
+- *Twice so far,* by the pom's recorded revision on polaris and on Clojars:
+  - =3.5.7-bun.2=: local [[orgit-rev:~/dev/my/shadow-cljs::fd75b50f452d6619aecede24ae06ee34858537cc][fd75b50f]], Clojars [[orgit-rev:~/dev/my/shadow-cljs::3e6d24ab1c03f27ef2a3bfa52f0a18b1ab8e59a2][3e6d24ab]].
+  - =3.4.11-bun.2=: local [[orgit-rev:~/dev/my/shadow-cljs::d339761628c349ddc2c8219dcfbaf9b7b3a8fa82][d3397616]], Clojars [[orgit-rev:~/dev/my/shadow-cljs::9f6ab240adaacb2b713f023f3d6cf1b40de4fc87][9f6ab240]].
+  - =3.5.7-bun=, whose version the sync committed, agrees: [[orgit-rev:~/dev/my/shadow-cljs::33275d596c9444676f7e4b7621a83244a56f1022][33275d59]] on both.
+- *Harmless so far.* The local and Clojars =3.5.7-bun.2= jars differ only in =pom.xml= and =pom.properties=; the other 334 entries match by CRC. The =3.4.11-bun.2= jars were not compared.
 
