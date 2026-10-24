@@ -71,7 +71,10 @@ Cursive), the console REPL or `shadow/cljs-eval`.
   compile it also waits up to 5 seconds for that compile, so a tool that
   evaluates as soon as the watch's nREPL port appears still reaches the
   process; with the connect wait after it, such an eval can take close to
-  10 seconds. Otherwise it says at once why there is none: that no compile has
+  10 seconds. That wait counts from each eval: a region of forms pays it once
+  per form, a first compile longer than 5 seconds still fails the eval, and a
+  build that is never compiled (`:autobuild false` with no compile) costs
+  every eval 5 seconds. Otherwise it says at once why there is none: that no compile has
   succeeded yet, the launch error, that the process exited (with its code), or
   that it is running but not connected — the last three with the end of that
   run's output, printed once for a region of forms.

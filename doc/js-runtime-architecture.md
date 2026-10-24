@@ -134,7 +134,11 @@ is safe on the worker's own thread. It waits in two cases:
   either way. Predicting the merged config instead would restate
   `build/configure`'s merge chain. A failed compile ends the wait, since its
   report already says why. The connect wait below follows it, so such an eval
-  can take close to 10 s.
+  can take close to 10 s. The window counts from each eval, unlike the connect
+  window: a region of forms pays it once per form, a longer first compile
+  still fails the eval, and a build that is never compiled costs every eval
+  5 s. Counting from the compile's start needs a busy signal the worker does
+  not publish mid-message; it was weighed and not built.
 - **While a new process is within 5 s of its `:started-at`**, so a region of
   forms against one that cannot connect pays the wait once.
 
