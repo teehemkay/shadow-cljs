@@ -10,12 +10,13 @@
 #+AUTHOR: Claude Code (claude-opus-5-5)
 #+ORG_VERSION: 9.8.9-??-7427df2d9
 #+OPTIONS: toc:2 num:nil
+#+OUTLINE: content
 
 * What this is
 
 The fork of shadow-cljs (=org.clojars.teehemkay/shadow-cljs=) adds two things to upstream:
 - a /selector/: the =:js-runtime= build key, the =--js-runtime= CLI flag, and the two places upstream hard-codes =node=, which are =:node-test= autorun and =node-repl='s process;
-- a /managed runtime/: after each successful compile of a watched build carrying =:js-runtime=, the watch worker spawns =bun out/<build>.js=, keeps one alive, and stops it with the worker.
+- a /managed runtime/: after each successful compile of a watched build carrying =:js-runtime=, the watch worker spawns =bun= on a small bootstrap script that requires =out/<build>.js= and keeps the process alive, keeps one such process running, and stops it with the worker. Since 3.5.7-bun.2, an eval that arrives before that process connects waits for it.
 
 The managed runtime gives agents in kiln, ik and bunbushka one command, =bb dev=, after which =(shadow/repl :dev)= has a runtime to evaluate in. It costs most of the fork's diff against upstream ([[#fork-today]]), every October review round, the 3.5.7 sync's =worker.clj= conflict, [[id:20261018T195432.672778][two known limitations]], and [[id:20261021T185802.026641][the first-compile bug]]. The survey is [[id:20261024T174047.298693][the IDEA this spec settles]].
 
@@ -220,6 +221,8 @@ printf '%s\n' 'import WebSocket from "ws";' \
 
 The fork removes everything [[#fork-today]] lists under the managed runtime: the code in =src/main=, the =src/repl= suite and its probes, its CI and publishing-doc entries, and its documentation. A watched build carrying =:js-runtime= then behaves as upstream's does: the watch compiles, and nothing starts a process.
 
+The eval wait 3.5.7-bun.2 added goes with it, since it waits on the managed process. An eval with no connected runtime fails at once with upstream's "no available JS runtime", and callers wait for a runtime themselves ([[#callers-wait]]).
+
 With the managed runtime gone, [[id:20261018T195432.672778][the two known limitations]] have nothing left to describe and close with this change.
 
 ** The fork keeps the selector
@@ -292,6 +295,74 @@ The launcher runs the consumer's watch command, =bun run --bun shadow-cljs watch
 
 The coupling's failure is loud. If upstream rewords the line, Bun never starts: no =[bun]= line appears, and =(shadow/repl :dev)= reports no available JS runtime.
 
+The launcher gives the watch a stdin pipe it holds open for its whole life. A watch that started its own server polls stdin and stops its builds once stdin closes:
+
+#+name: ev-watch-stdin
+#+begin_src shell :results output
+set -e
+# The CLI watch's stdin poll, in shadow.cljs.devtools.server/from-cli at
+# the fork's fixed commit. Upstream's code, unchanged by the fork.
+git -C ~/dev/my/shadow-cljs show ae2f64e999fdc810ef950f6b61e444be472e5475:src/main/shadow/cljs/devtools/server.clj \
+  | grep -n -e 'defn stdin-closed?' -e '(not (stdin-closed?))' -e '(stop-builds!)'
+#+end_src
+
+#+RESULTS: ev-watch-stdin
+: 637:(defn stdin-closed? []
+: 698:                        (stop-builds!)
+: 706:                    (when (and (not (stdin-closed?))
+: 712:                    (stop-builds!))))
+
+Whether a =/dev/null= stdin or a closed pipe makes =stdin-closed?= true is unverified: it tests =.available= for -1. Holding the pipe open is safe either way, so the launcher never depends on the answer.
+
+** bb dev works beside a server that is already running
+:PROPERTIES:
+:CUSTOM_ID: attached-watch
+:KIND: decision
+:EVIDENCE: bare
+:BARE-REASON: Observed in a throwaway project on [2026-10-28 Wed]; a block would start two shadow JVMs per audit.
+:END:
+
+When a shadow server is already running in the project, such as the one kiln's =bb watch= starts for its =:test= build, the launcher's =shadow-cljs watch <build>= attaches to it instead of starting another. The launcher handles that case exactly like the other, because the attached CLI prints the same lines. Observed on [2026-10-28 Wed] with the fork's 3.5.7-bun.2, a server watching =:test=, and a second CLI running =watch dev=:
+- the attached CLI printed =shadow-cljs - connected to server=, then =[:dev] Build completed.= for the first compile and again for a recompile after an edit;
+- a third CLI asking to watch =:dev= printed =already started= with a stack trace and exited 1;
+- stopping the attached CLI stopped the =:dev= watch (its output stopped updating after a later edit), and the server and its =:test= watch kept running.
+
+So =bb dev= and continuous testing run side by side, in either start order. tmk ruled on [2026-10-28 Wed] that refusing a running server would block that pairing ([[#rejected-refuse-server]]). A =:dev= already watched elsewhere needs no detection of its own: the watch exits 1, and the launcher reports it and exits ([[#stop-together]]).
+
+** The build's :js-runtime chooses the program
+:PROPERTIES:
+:CUSTOM_ID: runtime-from-config
+:KIND: decision
+:EVIDENCE: ev-runtime-sites
+:END:
+
+The launcher reads the build's =:js-runtime= from =shadow-cljs.edn=: =:bun= runs =bun=, and =:node= or no key runs =node=. Once the managed runtime is gone, nothing in the fork reads the key on a =:node-script= build ([[#fork-today]]), so the launcher becomes its reader. The key keeps meaning what it says, and the =cljs-repl-development= skill, which reads it to tell which runtime a project uses, stays correct. Reading the file tolerates reader tags it does not know. This is this spec's call, explained to tmk on [2026-10-28 Wed].
+
+** The launcher runs the build's output directly
+:PROPERTIES:
+:CUSTOM_ID: run-output-directly
+:KIND: decision
+:EVIDENCE: ev-client-keepalive
+:END:
+
+The launcher runs =<program> <output-to>=, such as =bun out/dev.js=, with no bootstrap script. The managed runtime's bootstrap kept its process alive with a long =setInterval=. shadow's client already does the same with its own 1 s idle interval, which only stopping the runtime clears:
+
+#+name: ev-client-keepalive
+#+begin_src shell :results output
+set -e
+# The client's idle interval and the one place that clears it, in
+# shadow.cljs.devtools.client.shared at the fork's fixed commit.
+git -C ~/dev/my/shadow-cljs show ae2f64e999fdc810ef950f6b61e444be472e5475:src/main/shadow/cljs/devtools/client/shared.cljs \
+  | grep -n -e 'setInterval' -e 'clearInterval' -e 'defn stop-runtime!'
+#+end_src
+
+#+RESULTS: ev-client-keepalive
+: 378:(defn stop-runtime! [{:keys [state-ref] :as runtime}]
+: 381:    (js/clearInterval interval)
+: 452:    (swap! state-ref assoc ::interval (js/setInterval idle-fn 1000))
+
+So a Bun whose client gave up retrying, or was rejected as stale, stays up and disconnected. It does not exit and get restarted every 20 s. The launcher's tests confirm this against a real =:node-script= build.
+
 ** Bun starts after the watch's first successful compile
 :PROPERTIES:
 :CUSTOM_ID: start-after-compile
@@ -338,11 +409,25 @@ The report is one line, such as =[bb dev] bun exited with code 1 after 0.4s; wai
 :BARE-REASON: Behaviour to build; the launcher's own test suite is its evidence.
 :END:
 
-Bound: when the launcher exits on SIGINT or SIGTERM, or because the watch exited, it stops Bun and the watch before it exits: SIGTERM, then a forced kill after 2 s. A watch that exits on its own makes the launcher exit non-zero, reporting the watch's exit code.
+Bound: when the launcher exits on SIGINT or SIGTERM, or because its watch exited, it stops Bun and its watch before it exits: SIGTERM, then a forced kill after 2 s. A watch that exits on its own makes the launcher exit non-zero, reporting the watch's exit code. Stopping its watch stops only the build it watches: a server it attached to keeps running, with that server's other builds ([[#attached-watch]]).
 
-A SIGKILL to the launcher is outside the bound: no process can act on its own SIGKILL, so Bun and the watch outlive it. This is upstream's position for any runtime started by hand.
+A SIGKILL to the launcher is outside the bound: no process can act on its own SIGKILL. Bun outlives it, up and disconnected once the watch is gone ([[#run-output-directly]]), and the watch may outlive it too ([[#reads-watch-output]]). This is upstream's position for any runtime started by hand.
 
 * The consumers                                                    :normative:
+
+** Callers wait for a runtime before their first eval
+:PROPERTIES:
+:CUSTOM_ID: callers-wait
+:KIND: decision
+:EVIDENCE: bare
+:BARE-REASON: tmk's ruling on where waiting lives; the API it names is upstream's and unchanged.
+:END:
+
+Anything that evaluates ClojureScript right after =bb dev= starts waits for a runtime first. It polls =(shadow.cljs.devtools.api/repl-runtimes <build>)= in Clojure mode until the result is non-empty, then selects the build and evaluates. This is upstream's contract: a runtime is the caller's to wait for. tmk ruled this on [2026-10-28 Wed], after a side note pointed out that the 3.5.7-bun.2 wait goes with the managed runtime ([[#drop-managed-runtime]]). The alternatives are [[#rejected-fork-wait]] and [[#rejected-ready-line]].
+
+The callers are:
+- agents following the =cljs-repl-development= skill and the spike skill's =cljs-repl-mechanics.md=, whose setup steps gain the wait;
+- agent-skills' ClojureScript session test, which found the first-compile bug.
 
 ** Each consumer bumps the fork and switches bb dev in one commit
 :PROPERTIES:
@@ -362,7 +447,7 @@ bunbushka's template changes in the same bunbushka release that ships the launch
 :EVIDENCE: ev-managed-mentions
 :END:
 
-Every instruction surface that says =(shadow/repl …)= launches a managed Bun process is rewritten to say that =bb dev= starts Bun once the first compile completes. The rule "do not run =bun out/dev.js= yourself" stays, with its reason changed: =bb dev= owns that process. The surfaces, at each repository's =main= on [2026-10-28 Wed]:
+Every instruction surface that says =(shadow/repl …)= launches a managed Bun process is rewritten to say that =bb dev= starts Bun once the first compile completes, and that the first eval waits for a runtime ([[#callers-wait]]). The rule "do not run =bun out/dev.js= yourself" stays, with its reason changed: =bb dev= owns that process. The surfaces, at each repository's =main= on [2026-10-28 Wed]:
 
 #+name: ev-managed-mentions
 #+begin_src shell :results output
@@ -471,6 +556,36 @@ Four copies today (kiln, ik, bunbushka, the template) and one more per scaffolde
 
 The brainstorm proposed dropping it, gated on upstream's handler coping once Bun is started from outside. The commit that added it says upstream's handler throws whenever a peer dies mid-send, and the launcher's restarts make such peers. The gate fails on that account alone ([[#keep-guarded-handler]]).
 
+** Rejected: keep a small eval wait in the fork
+:PROPERTIES:
+:CUSTOM_ID: rejected-fork-wait
+:KIND: rejection
+:EVIDENCE: bare
+:BARE-REASON: tmk's ruling on where waiting lives.
+:END:
+
+An eval with no runtime could wait up to a bound for one to connect, as 3.5.7-bun.2's does. Callers would not change, but the wait sits in the worker and REPL files, the conflict surface this spec exists to clear.
+
+** Rejected: bb dev announces readiness
+:PROPERTIES:
+:CUSTOM_ID: rejected-ready-line
+:KIND: rejection
+:EVIDENCE: bare
+:BARE-REASON: tmk's ruling on where waiting lives.
+:END:
+
+The launcher could print a line once Bun's client prints =ready!=, for callers to wait on. Only something reading =bb dev='s output sees it; a caller that only talks nREPL does not. The client's own =ready!= line reaches =bb dev='s output anyway ([[#interleaved-output]]).
+
+** Rejected: refuse to start beside a running server
+:PROPERTIES:
+:CUSTOM_ID: rejected-refuse-server
+:KIND: rejection
+:EVIDENCE: bare
+:BARE-REASON: tmk's ruling; the attached case's behaviour is recorded in attached-watch.
+:END:
+
+=bb dev= could exit when =.shadow-cljs/server.pid= shows a server running. It was proposed before the attached case was checked. tmk ruled it out on [2026-10-28 Wed]: it would rule out the REPL and continuous testing side by side, and the attached case turned out to need nothing special ([[#attached-watch]]).
+
 ** Rejected: a readiness check before starting Bun
 :PROPERTIES:
 :CUSTOM_ID: rejected-readiness-check
@@ -485,5 +600,5 @@ Polling the server's port before starting Bun adds nothing. The server is up bef
 - The launcher's interface: how a consumer's =bb dev= names the build, the output file and the watch command. Explicit arguments are simplest; reading =shadow-cljs.edn= needs its reader tags handled.
 - How bb consumes bunbushka: a Maven dependency pulls the jar's own dependencies onto bb's classpath. Check what that costs, and use a =:deps/root= or a separate artifact if it is heavy.
 - The launcher's tests: a fake watch that prints the compile lines on cue and a fake runtime script that exits on cue cover [[#start-after-compile]], [[#restart-policy]] and [[#stop-together]] without shadow or Bun.
-- Sorting =src/repl/shadow/cljs/js_runtime_test.clj= and =server_test_runner.clj= into what tests the selector, which stays, and what tests the managed runtime, which goes.
+- Sorting =src/repl/shadow/cljs/js_runtime_test.clj= and =server_test_runner.clj= into what tests the selector, which stays, and what tests the managed runtime, which goes. The bootstrap's tests go, since the launcher runs the output directly ([[#run-output-directly]]).
 - Rewriting each surface [[#docs-rewritten]] lists, and the fork's =doc/js-runtime.md= and =doc/js-runtime-architecture.md=.
