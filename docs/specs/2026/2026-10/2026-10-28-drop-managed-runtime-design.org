@@ -1,0 +1,489 @@
+:PROPERTIES:
+:ID:       20261028T164829.836099
+:CREATED:  [2026-10-28 Wed 16:48]
+:END:
+
+#+TITLE: The fork keeps the js-runtime selector and bb dev starts Bun
+#+SUBTITLE: Drop the managed runtime from the shadow-cljs fork; a shared bb launcher in bunbushka takes over starting, restarting and stopping Bun
+#+SPEC_FORMAT: executable-spec/1
+#+DATE: [2026-10-28 Wed]
+#+AUTHOR: Claude Code (claude-opus-5-5)
+#+ORG_VERSION: 9.8.9-??-7427df2d9
+#+OPTIONS: toc:2 num:nil
+
+* What this is
+
+The fork of shadow-cljs (=org.clojars.teehemkay/shadow-cljs=) adds two things to upstream:
+- a /selector/: the =:js-runtime= build key, the =--js-runtime= CLI flag, and the two places upstream hard-codes =node=, which are =:node-test= autorun and =node-repl='s process;
+- a /managed runtime/: after each successful compile of a watched build carrying =:js-runtime=, the watch worker spawns =bun out/<build>.js=, keeps one alive, and stops it with the worker.
+
+The managed runtime gives agents in kiln, ik and bunbushka one command, =bb dev=, after which =(shadow/repl :dev)= has a runtime to evaluate in. It costs most of the fork's diff against upstream ([[#fork-today]]), every October review round, the 3.5.7 sync's =worker.clj= conflict, [[id:20261018T195432.672778][two known limitations]], and [[id:20261021T185802.026641][the first-compile bug]]. The survey is [[id:20261024T174047.298693][the IDEA this spec settles]].
+
+This spec moves the launching out of the JVM. The fork keeps the selector and drops the managed runtime. A bb namespace in bunbushka starts the watch, starts Bun after the watch's first successful compile, interleaves Bun's output into its own, restarts Bun when it dies, and stops it on exit. The consumers' =bb dev= calls it. Agents see no change in workflow: run =bb dev=, then =(shadow/repl :dev)=.
+
+* Scope and boundaries
+
+In scope:
+- the fork: removing the managed runtime, its tests, its CI job and its documentation;
+- bunbushka: the launcher, its tests, its own =bb dev=, and its project template;
+- kiln and ik: =bb dev= and the fork version, switched in one commit each;
+- the instructions agents follow: the consumers' =CLAUDE.md= and =AGENTS.md=, kiln's development guide and architecture reference, and agent-skills' =cljs-repl-development= skill.
+
+Out of scope, as boundary calls:
+- *Browser runtimes.* Safari and Firefox Developer Edition for pure-ClojureScript web apps, and whether shadow-cljs or Figwheel Main serves them, are a separate project. A browser build needs no fork, so that project does not depend on this one. The launcher only keeps "start a runtime" as one function, so opening a URL in a browser could later be a second kind of runtime.
+- *Historical documents.* Plans, journals, progress archives, specs and transcripts that describe the managed runtime stay as written; they record what was true then.
+- *The upstream 3.5.8 sync.* It touches no file this spec changes ([[#release-order]]).
+
+* The fork today
+:PROPERTIES:
+:CUSTOM_ID: fork-today
+:END:
+
+The fork's =src/main= diff against its last upstream merge, =f2fbb3a9=, at the fork's =ae2f64e9=:
+
+#+name: ev-fork-footprint
+#+begin_src shell :results output
+set -e
+# The fork's src/main changes since its last upstream merge, per file,
+# between two fixed commits so the table never moves.
+cd ~/dev/my/shadow-cljs
+git diff --numstat f2fbb3a9ba7be3f91ff386039020a1632646e458 ae2f64e999fdc810ef950f6b61e444be472e5475 -- src/main \
+  | awk '{printf "%+5d %-4s %s\n", $1, "-"$2, $3; a+=$1; r+=$2} END {printf "total: +%d -%d\n", a, r}'
+#+end_src
+
+#+RESULTS: ev-fork-footprint
+#+begin_example
+   +4 -1   src/main/shadow/build.clj
+   +4 -1   src/main/shadow/build/config.clj
+   +5 -2   src/main/shadow/build/node.clj
+   +2 -2   src/main/shadow/build/targets/node_script.clj
+  +14 -1   src/main/shadow/build/targets/node_test.clj
+  +47 -0   src/main/shadow/build/targets/shared.clj
+   +2 -1   src/main/shadow/cljs/devtools/api.clj
+   +7 -1   src/main/shadow/cljs/devtools/cli_actual.clj
+  +11 -0   src/main/shadow/cljs/devtools/cli_opts.cljc
+  +28 -0   src/main/shadow/cljs/devtools/server/js_runtime.clj
+  +46 -9   src/main/shadow/cljs/devtools/server/repl_impl.clj
+  +15 -4   src/main/shadow/cljs/devtools/server/util.clj
+   +9 -4   src/main/shadow/cljs/devtools/server/web/api.clj
+ +142 -0   src/main/shadow/cljs/devtools/server/web/websocket.clj
+ +115 -2   src/main/shadow/cljs/devtools/server/worker.clj
+ +149 -2   src/main/shadow/cljs/devtools/server/worker/impl.clj
+   +1 -1   src/main/shadow/txt/repl-help.txt
+total: +601 -31
+#+end_example
+
+The files fall into four groups:
+- *The managed runtime*, which goes: =server/worker.clj=, =server/worker/impl.clj=, =server/js_runtime.clj=, the managed parts of =server/repl_impl.clj=, and =managed-runtime?= in =build/targets/shared.clj=.
+- *The selector*, which stays: =build.clj=, =build/config.clj=, =build/node.clj=, =targets/node_script.clj=, =targets/node_test.clj=, the rest of =targets/shared.clj=, =cli_actual.clj=, =cli_opts.cljc=, the =node-repl= parts of =repl_impl.clj=, =devtools/api.clj= and =repl-help.txt=.
+- *The guarded websocket handler*, which stays: =server/web/websocket.clj= and =server/web/api.clj= ([[#keep-guarded-handler]]).
+- *The worker output printer fix*, which stays: =server/util.clj= ([[#keep-printer-fix]]).
+
+Where the managed runtime and the selector's two process sites live, by symbol:
+
+#+name: ev-runtime-sites
+#+begin_src shell :results output
+set -e
+# Files naming the managed runtime and the selector's two argv helpers,
+# at the fork's fixed commit, with match counts.
+cd ~/dev/my/shadow-cljs
+for sym in managed-runtime js-runtime-file-argv js-runtime-stdin-argv; do
+  echo "$sym:"
+  git grep -c -e "$sym" ae2f64e999fdc810ef950f6b61e444be472e5475 -- src/main \
+    | sed 's/^ae2f64e999fdc810ef950f6b61e444be472e5475:/  /'
+done
+#+end_src
+
+#+RESULTS: ev-runtime-sites
+#+begin_example
+managed-runtime:
+  src/main/shadow/build/targets/shared.clj:1
+  src/main/shadow/cljs/devtools/server/js_runtime.clj:2
+  src/main/shadow/cljs/devtools/server/repl_impl.clj:1
+  src/main/shadow/cljs/devtools/server/worker.clj:9
+  src/main/shadow/cljs/devtools/server/worker/impl.clj:28
+js-runtime-file-argv:
+  src/main/shadow/build/targets/node_test.clj:1
+  src/main/shadow/build/targets/shared.clj:1
+  src/main/shadow/cljs/devtools/server/worker/impl.clj:1
+js-runtime-stdin-argv:
+  src/main/shadow/build/targets/shared.clj:1
+  src/main/shadow/cljs/devtools/server/repl_impl.clj:1
+#+end_example
+
+=js-runtime-file-argv= in =worker/impl.clj= is the managed runtime's spawn and goes with it. Its =node_test.clj= call is =:node-test= autorun, and =js-runtime-stdin-argv= in =repl_impl.clj= is =node-repl='s process; both stay.
+
+Outside =src/main=, the managed runtime also owns:
+- =src/repl/shadow/cljs/managed_runtime_test.clj= and its three probes (=managed_runtime_probe.cljs=, =managed_runtime_busy_probe.cljs=, =managed_runtime_exit_probe.cljs=);
+- the =shadow.cljs.managed-runtime-test= entry in =.github/workflows/ci.yml='s =repl-tests= job and in [[my:shadow-cljs/docs/clojars-publishing.org]];
+- the lifecycle sections of [[my:shadow-cljs/doc/js-runtime-architecture.md]] and the managed-process section of [[my:shadow-cljs/doc/js-runtime.md]].
+
+* What the launcher can rely on
+:PROPERTIES:
+:CUSTOM_ID: launcher-ground
+:END:
+
+Every consumer starts its dev build through the CLI, not through =shadow.cljs.devtools.api/watch=, at each repository's =main= on [2026-10-28 Wed]:
+
+#+name: ev-consumer-entry
+#+begin_src shell :results output
+set -e
+# Each consumer's bb dev task, at fixed commits of each main branch.
+for pair in kiln:e021333dff93df934423f9378fa16ac52dd03ec5 \
+            ik:1d76352639252f16be1e24ea47e795267b10c2c8 \
+            bunbushka:3e687c50e13680872245e586ad161356e1cc768a; do
+  r=${pair%%:*}; s=${pair#*:}
+  git -C ~/dev/my/"$r" grep -n -e 'shadow-cljs watch dev' "$s" -- bb.edn templates/project/bb.edn \
+    | sed "s/^$s:/$r:/"
+done
+#+end_src
+
+#+RESULTS: ev-consumer-entry
+: kiln:bb.edn:139:   :task (shell "bun run --bun shadow-cljs watch dev")}
+: ik:bb.edn:26:                :task (shell "bun run --bun shadow-cljs watch dev")}
+: bunbushka:bb.edn:22:   :task (shell "bun run --bun shadow-cljs watch dev")}
+: bunbushka:templates/project/bb.edn:42:                :task (shell "bun run --bun shadow-cljs watch dev")}
+
+The watch prints one line per compile of each build. These are the lines the launcher reads:
+
+#+name: ev-build-lines
+#+begin_src shell :results output
+set -e
+# The watch's per-compile lines, in shadow.cljs.devtools.server.util at
+# the fork's fixed commit.
+git -C ~/dev/my/shadow-cljs show ae2f64e999fdc810ef950f6b61e444be472e5475:src/main/shadow/cljs/devtools/server/util.clj \
+  | grep -n -e 'Build completed' -e 'Build failure'
+#+end_src
+
+#+RESULTS: ev-build-lines
+: 125:    (println (format "[%s] Build completed. (%d files, %d compiled, %d warnings, %.2fs)"
+: 140:  (println (format "[%s] Build failure:" build-id))
+
+shadow's node client, which =out/dev.js= carries, already reports what an agent needs to see from a runtime. It prints when it connects (=ready!=). It retries a refused connection every 5 s and prints when it gives up after the fourth error. And when the server rejects the loaded JS as built by another watch, it prints =Stale Output!= and marks itself stale, which stops every retry:
+
+#+name: ev-client-signals
+#+begin_src shell :results output
+set -e
+# The node client's connect, retry, give-up and stale signals, at the
+# fork's fixed commit. These files are upstream's, unchanged by the fork.
+for f in node shared; do
+  git -C ~/dev/my/shadow-cljs show ae2f64e999fdc810ef950f6b61e444be472e5475:src/main/shadow/cljs/devtools/client/"$f".cljs \
+    | grep -n -e 'ready!' -e 'giving up' -e 'Stale Output' -e '::stale true' -e '(not stale)' \
+              -e 'schedule-connect! this 5000' -e '(>= 3 (::ws-errors' \
+    | sed "s/^/$f.cljs:/"
+done
+#+end_src
+
+#+RESULTS: ev-client-signals
+: node.cljs:141:               (js/console.log (str "shadow-cljs - #" (-> runtime :state-ref deref :client-id) " ready!"))))
+: node.cljs:151:                (str "Stale Output! Your loaded JS was not produced by the running shadow-cljs instance."
+: shared.cljs:316:        (swap! state-ref assoc ::stale true))
+: shared.cljs:324:    (if (>= 3 (::ws-errors @state-ref))
+: shared.cljs:325:      (.schedule-connect! this 5000)
+: shared.cljs:326:      (js/console.warn "shadow-cljs: giving up trying to connect to " info)))
+: shared.cljs:343:                 (not stale)
+: shared.cljs:364:      (when (and (not stale) (not shutdown))
+
+The client was written for Node's =ws= package. Under Bun, =ws= is Bun's own implementation, and it fires the same =error= then =close= on a refused connection, which is the pair the retry hangs on:
+
+#+name: ev-bun-refused
+#+begin_src shell :results output
+set -e
+# Bun's ws on a refused port: which events fire, in order. Port 1 on
+# loopback has no listener. Writes stay in a temp dir.
+if ! command -v bun > /dev/null; then
+  echo "precondition failed: bun is not on PATH"
+  exit 1
+fi
+t=$(mktemp -d); trap 'rm -rf "$t"' EXIT
+printf '%s\n' 'import WebSocket from "ws";' \
+  'const s = new WebSocket("ws://127.0.0.1:1/");' \
+  's.on("open", () => console.log("open"));' \
+  's.on("error", (e) => console.log("error", e.message));' \
+  's.on("close", (code) => console.log("close", code));' \
+  'setTimeout(() => process.exit(0), 1500);' > "$t/probe.mjs"
+(cd "$t" && bun probe.mjs < /dev/null)
+#+end_src
+
+#+RESULTS: ev-bun-refused
+: error WebSocket connection to 'ws://127.0.0.1:1/' failed: Failed to connect
+: close 1006
+
+* What the fork keeps and drops                                    :normative:
+
+** The fork drops the managed runtime
+:PROPERTIES:
+:CUSTOM_ID: drop-managed-runtime
+:KIND: decision
+:EVIDENCE: ev-fork-footprint ev-runtime-sites
+:END:
+
+The fork removes everything [[#fork-today]] lists under the managed runtime: the code in =src/main=, the =src/repl= suite and its probes, its CI and publishing-doc entries, and its documentation. A watched build carrying =:js-runtime= then behaves as upstream's does: the watch compiles, and nothing starts a process.
+
+With the managed runtime gone, [[id:20261018T195432.672778][the two known limitations]] have nothing left to describe and close with this change.
+
+** The fork keeps the selector
+:PROPERTIES:
+:CUSTOM_ID: keep-selector
+:KIND: decision
+:EVIDENCE: ev-runtime-sites
+:END:
+
+The selector stays as it is: the =:js-runtime= key and its spec, the =--js-runtime= flag, =:node-test= autorun through =shared/js-runtime-file-argv=, =node-repl= through =shared/js-runtime-stdin-argv=, the stdin import-path fix in =build/node.clj=, and the warning when =:js-runtime= is set on a build that ignores it. None of it starts a long-lived process: autorun waits for its test process to exit, and =node-repl= owns its process for the REPL's lifetime, as upstream's does with =node=.
+
+** The guarded websocket handler stays
+:PROPERTIES:
+:CUSTOM_ID: keep-guarded-handler
+:KIND: decision
+:EVIDENCE: ev-guarded-handler-reason
+:END:
+
+=shadow.cljs.devtools.server.web.websocket= stays. It fixes upstream's handler throwing, uncaught, when a peer dies while a message to it is in flight:
+
+#+name: ev-guarded-handler-reason
+#+begin_src shell :results output
+set -e
+# The commit that added the guarded handler: its subject and first paragraph.
+git -C ~/dev/my/shadow-cljs show -s --format=%B bd4c8e799254ff1d469a035caa5fcd75eb45fe46 | sed -n '1,9p'
+#+end_src
+
+#+RESULTS: ev-guarded-handler-reason
+: fix: a runtime's websocket survives the runtime going away mid-send
+: 
+: shadow-http's CoreAsyncWebSocketHandler sends from its write loop with no
+: guard, so a message in flight when the peer dies throws on the closing
+: connection, uncaught on the loop's virtual thread: "Socket closed", or
+: "Deflater has been closed" when the reader has already closed the
+: compressor. The managed runtime makes this routine, since the worker
+: kills its own process while messages to it, such as a build-complete for
+: a build that just stopped being managed, may still be queued.
+
+The managed runtime made that routine, but it does not cause it. A Bun that crashes, and the launcher's own restarts ([[#restart-policy]]), are peers dying too. Dropping it is the job of [[id:20261019T105108.243880][offering it to shadow-http upstream]], not of this spec.
+
+** The worker output printer fix stays
+:PROPERTIES:
+:CUSTOM_ID: keep-printer-fix
+:KIND: decision
+:EVIDENCE: ev-fork-footprint ev-build-lines
+:END:
+
+The fork's change to the worker output printer in =shadow.cljs.devtools.server.util= stays. Upstream's printer buffers one message and drops it when the next one overtakes it, a build failure included. The fork's buffer holds 1024 and never queues verbose-only =:build-log= events. The launcher reads the printed compile lines ([[#reads-watch-output]]), so a dropped =Build completed.= line would leave Bun unstarted. The fix is upstream material on its own merits and is no part of the managed runtime.
+
+* The launcher                                                     :normative:
+
+** The launcher is a bb namespace in bunbushka
+:PROPERTIES:
+:CUSTOM_ID: launcher-home
+:KIND: decision
+:EVIDENCE: bare
+:BARE-REASON: A placement choice between repositories; nothing executable distinguishes them.
+:END:
+
+The launcher is one bb namespace shipped in bunbushka, published as =com.exidia/bunbushka=, and each consumer's =bb.edn= pulls it in through =:deps=. bunbushka is already "ClojureScript on Bun" plus the project template every new project is scaffolded from, so the template gets the launcher in the same release. tmk accepted this on [2026-10-28 Wed]; the alternatives are [[#rejected-bd-subcommand]] and [[#rejected-copies]].
+
+** The launcher learns about compiles from the watch's own output
+:PROPERTIES:
+:CUSTOM_ID: reads-watch-output
+:KIND: decision
+:EVIDENCE: ev-consumer-entry ev-build-lines
+:END:
+
+The launcher runs the consumer's watch command, =bun run --bun shadow-cljs watch <build>=, as its child, copies the child's output to its own stdout unchanged, and reads it line by line. A line starting =[:<build>] Build completed.= is a successful compile of the watched build; =[:<build>] Build failure:= is a failed one. These come from =shadow.cljs.devtools.server.util=, and it is the only coupling the launcher has to shadow. tmk accepted this on [2026-10-28 Wed]; the alternatives are [[#rejected-build-hook]] and [[#rejected-mtime]].
+
+The coupling's failure is loud. If upstream rewords the line, Bun never starts: no =[bun]= line appears, and =(shadow/repl :dev)= reports no available JS runtime.
+
+** Bun starts after the watch's first successful compile
+:PROPERTIES:
+:CUSTOM_ID: start-after-compile
+:KIND: guarantee
+:EVIDENCE: ev-build-lines ev-client-signals ev-bun-refused
+:END:
+
+Bound: the launcher starts Bun only after the watch it started has printed =Build completed.= for the build it was given. It never starts Bun on an output file left by an earlier watch. Such a file would connect, be rejected as =Stale Output!=, and stop retrying for good ([[#launcher-ground]]).
+
+Trust boundary: the line means the build's output is written. The printer prints it after the flush stage, in =shadow.cljs.devtools.server.util=. A Bun started then finds the server already listening, since the CLI's watch starts the server before its first compile. Were the server late, the client's own retry covers about 15 s, and it works under Bun ([[#launcher-ground]]). The launcher adds no readiness check of its own ([[#rejected-readiness-check]]).
+
+** Bun's output is interleaved into bb dev's, prefixed
+:PROPERTIES:
+:CUSTOM_ID: interleaved-output
+:KIND: decision
+:EVIDENCE: ev-client-signals
+:END:
+
+Each line Bun writes to stdout or stderr goes to the launcher's stdout prefixed with =[bun]= and a space. There is no separate log file. Agents run =bb dev= in the background and read its output, so the client's own signals (=ready!=, =giving up=, =Stale Output!=), the =:main='s output and a crash's stack trace all reach the agent where it already looks. They replace the managed runtime's "never connected" diagnostic and its log file. tmk accepted this on [2026-10-28 Wed].
+
+The launcher's own reports are prefixed with =[bb dev]= and a space, so its lines, shadow's and Bun's never read as each other's.
+
+** A Bun that dies is restarted, unless it died at start
+:PROPERTIES:
+:CUSTOM_ID: restart-policy
+:KIND: decision
+:EVIDENCE: bare
+:BARE-REASON: Behaviour to build; the launcher's own test suite is its evidence.
+:END:
+
+When Bun exits while the launcher runs, the launcher reports the exit code and how long Bun ran, then:
+- if Bun ran 5 s or longer, it restarts Bun at once;
+- if Bun ran under 5 s, it waits for the next =Build completed.= line and starts Bun then.
+
+A Bun that dies at start almost always died loading the build's code, so restarting at once would load the same code and loop. The agent's next edit fixes it, and its compile is the retry. This mirrors the managed runtime, whose next compile started a fresh process. tmk ruled "restart it and report it" and accepted the fast-death rule on [2026-10-28 Wed]. The 5 s threshold is this spec's call.
+
+The report is one line, such as =[bb dev] bun exited with code 1 after 0.4s; waiting for the next successful compile=. The lines Bun printed before dying are already above it ([[#interleaved-output]]).
+
+** Stopping bb dev stops Bun
+:PROPERTIES:
+:CUSTOM_ID: stop-together
+:KIND: guarantee
+:EVIDENCE: bare
+:BARE-REASON: Behaviour to build; the launcher's own test suite is its evidence.
+:END:
+
+Bound: when the launcher exits on SIGINT or SIGTERM, or because the watch exited, it stops Bun and the watch before it exits: SIGTERM, then a forced kill after 2 s. A watch that exits on its own makes the launcher exit non-zero, reporting the watch's exit code.
+
+A SIGKILL to the launcher is outside the bound: no process can act on its own SIGKILL, so Bun and the watch outlive it. This is upstream's position for any runtime started by hand.
+
+* The consumers                                                    :normative:
+
+** Each consumer bumps the fork and switches bb dev in one commit
+:PROPERTIES:
+:CUSTOM_ID: atomic-switch
+:KIND: decision
+:EVIDENCE: ev-consumer-entry
+:END:
+
+kiln, ik and bunbushka each change the fork version and their =bb dev= task in the same commit. Either half alone breaks =bb dev=: the old fork with the launcher starts two Bun processes for one build, and the new fork with the old task starts none.
+
+bunbushka's template changes in the same bunbushka release that ships the launcher, so a project scaffolded from it gets a matching pair.
+
+** The instructions agents follow say bb dev starts Bun
+:PROPERTIES:
+:CUSTOM_ID: docs-rewritten
+:KIND: decision
+:EVIDENCE: ev-managed-mentions
+:END:
+
+Every instruction surface that says =(shadow/repl …)= launches a managed Bun process is rewritten to say that =bb dev= starts Bun once the first compile completes. The rule "do not run =bun out/dev.js= yourself" stays, with its reason changed: =bb dev= owns that process. The surfaces, at each repository's =main= on [2026-10-28 Wed]:
+
+#+name: ev-managed-mentions
+#+begin_src shell :results output
+set -e
+# Instruction surfaces mentioning the managed runtime or running
+# bun out/dev.js, with match counts, at fixed commits of each main
+# branch. History (docs/plans, journals, progress archives, transcripts)
+# is out of scope and not searched.
+for pair in kiln:e021333dff93df934423f9378fa16ac52dd03ec5 \
+            ik:1d76352639252f16be1e24ea47e795267b10c2c8 \
+            bunbushka:3e687c50e13680872245e586ad161356e1cc768a \
+            agent-skills:cb649c6f0bdc53c90ca21eee7ad045a9a03e51a8; do
+  r=${pair%%:*}; s=${pair#*:}
+  git -C ~/dev/my/"$r" grep -c -i -e 'managed bun' -e 'managed runtime' -e 'auto-launch' -e 'bun out/dev.js' "$s" \
+      -- CLAUDE.md AGENTS.md bb.edn templates plugin/skills docs/guides docs/reference \
+    | sed "s/^$s:/$r:/"
+done
+#+end_src
+
+#+RESULTS: ev-managed-mentions
+#+begin_example
+kiln:CLAUDE.md:2
+kiln:bb.edn:1
+kiln:docs/guides/development-guide.md:4
+kiln:docs/reference/architecture.md:2
+ik:AGENTS.md:2
+ik:CLAUDE.md:2
+bunbushka:CLAUDE.md:3
+bunbushka:bb.edn:1
+bunbushka:templates/project/CLAUDE.md:2
+agent-skills:plugin/skills/cljs-repl-development/SKILL.md:1
+agent-skills:plugin/skills/cljs-repl-development/bootstrap-reference.md:4
+agent-skills:plugin/skills/cljs-repl-development/shadow-cljs-reference.md:2
+#+end_example
+
+** Release order
+:PROPERTIES:
+:CUSTOM_ID: release-order
+:KIND: decision
+:EVIDENCE: bare
+:BARE-REASON: An ordering argument over releases; nothing executable distinguishes the orders.
+:END:
+
+1. The fork releases without the managed runtime.
+2. bunbushka releases the launcher and its template, built against that fork release.
+3. kiln and ik switch ([[#atomic-switch]]), and agent-skills' skill is rewritten.
+
+The fork's release in step 1 may also carry the upstream 3.5.8 sync, which changes only =deps.edn=, =project.clj=, =package.json= and =CHANGELOG.md=. Whether it does is tmk's call at release time.
+
+* Rejected alternatives                                            :normative:
+
+** Rejected: agents start Bun themselves
+:PROPERTIES:
+:CUSTOM_ID: rejected-agent-starts-bun
+:KIND: rejection
+:EVIDENCE: ev-client-signals
+:END:
+
+Upstream's model: =bb dev= starts only the watch, and the agent runs =bun out/dev.js= as a second step. It needs no code, but an agent would have to sequence two background processes and wait for the first compile with no clean signal. Starting early on a stale =out/dev.js= gets the output rejected, and the client then stops retrying for good. An agent that forgets to stop Bun just moves the orphans from the fork to the agent. tmk ruled on [2026-10-28 Wed] that =bb dev= keeps starting Bun for agents. Starting Bun by hand stays possible for tmk.
+
+** Rejected: a shadow build hook signals the launcher
+:PROPERTIES:
+:CUSTOM_ID: rejected-build-hook
+:KIND: rejection
+:EVIDENCE: bare
+:BARE-REASON: An architectural choice; the hook would run in the JVM this spec empties of runtime code.
+:END:
+
+A =:build-hooks= function at the =:flush= stage could write a marker file the launcher watches. That's a real API rather than log text, but the hook runs inside shadow's JVM, so its code would ship on shadow's classpath, in the fork or in bunbushka's jar. That puts code back where this spec removes it, and adds a file protocol between two processes.
+
+** Rejected: watch the output file's modification time
+:PROPERTIES:
+:CUSTOM_ID: rejected-mtime
+:KIND: rejection
+:EVIDENCE: bare
+:BARE-REASON: The defect is a missing signal, which no block can show present.
+:END:
+
+Polling =out/dev.js='s modification time needs no parsing, but it cannot tell a failed compile from a good one, and it can fire while the file is still being written.
+
+** Rejected: the launcher as a bd subcommand
+:PROPERTIES:
+:CUSTOM_ID: rejected-bd-subcommand
+:KIND: rejection
+:EVIDENCE: bare
+:BARE-REASON: A placement choice between repositories; nothing executable distinguishes them.
+:END:
+
+It would work for tmk's own projects, but every project would then need =bd= installed, and a project scaffolded from bunbushka's template would not run anywhere else.
+
+** Rejected: a copy of the launcher in each repository
+:PROPERTIES:
+:CUSTOM_ID: rejected-copies
+:KIND: rejection
+:EVIDENCE: ev-consumer-entry
+:END:
+
+Four copies today (kiln, ik, bunbushka, the template) and one more per scaffolded project, drifting apart from the first fix onward.
+
+** Rejected: drop the guarded websocket handler too
+:PROPERTIES:
+:CUSTOM_ID: rejected-drop-handler
+:KIND: rejection
+:EVIDENCE: ev-guarded-handler-reason
+:END:
+
+The brainstorm proposed dropping it, gated on upstream's handler coping once Bun is started from outside. The commit that added it says upstream's handler throws whenever a peer dies mid-send, and the launcher's restarts make such peers. The gate fails on that account alone ([[#keep-guarded-handler]]).
+
+** Rejected: a readiness check before starting Bun
+:PROPERTIES:
+:CUSTOM_ID: rejected-readiness-check
+:KIND: rejection
+:EVIDENCE: ev-client-signals ev-bun-refused
+:END:
+
+Polling the server's port before starting Bun adds nothing. The server is up before the first =Build completed.= line, and the client retries a refused connection for about 15 s under Bun as under Node.
+
+* Left to the builder
+
+- The launcher's interface: how a consumer's =bb dev= names the build, the output file and the watch command. Explicit arguments are simplest; reading =shadow-cljs.edn= needs its reader tags handled.
+- How bb consumes bunbushka: a Maven dependency pulls the jar's own dependencies onto bb's classpath. Check what that costs, and use a =:deps/root= or a separate artifact if it is heavy.
+- The launcher's tests: a fake watch that prints the compile lines on cue and a fake runtime script that exits on cue cover [[#start-after-compile]], [[#restart-policy]] and [[#stop-together]] without shadow or Bun.
+- Sorting =src/repl/shadow/cljs/js_runtime_test.clj= and =server_test_runner.clj= into what tests the selector, which stays, and what tests the managed runtime, which goes.
+- Rewriting each surface [[#docs-rewritten]] lists, and the fork's =doc/js-runtime.md= and =doc/js-runtime-architecture.md=.
