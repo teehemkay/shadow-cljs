@@ -422,8 +422,11 @@ The report is one line, such as =[bb dev] bun exited with code 1 after 0.4s; wai
 The launcher starts the watch and Bun each through one small guard script that bunbushka ships beside the launcher, run as =bun <guard> <command…>=. The guard:
 - starts the command in a process group of its own;
 - checks once a second whether its parent process has changed, which means the launcher is gone;
-- on that, or on SIGTERM or SIGINT, sends SIGTERM to the command's whole group and SIGKILL 2 s later;
-- exits with the command's exit code when the command exits.
+- on that, or on SIGTERM or SIGINT, stops the group: SIGTERM to the whole group, then SIGKILL to it 2 s later;
+- when the command exits by itself, stops the group the same way before exiting, since the command's own children may still be running;
+- exits with the command's exit code, or non-zero when the guard started the stop, and only once the stop has finished: the group is empty, or the SIGKILL has gone out.
+
+The last rule takes precedence over the command's exit. The watch is a chain, =bun run= starting node starting the JVM, and the first link can die on SIGTERM while the JVM is still stopping; a guard that exited with it would never send the SIGKILL. The launcher's tests cover this with a fake command whose child ignores SIGTERM.
 
 The group matters for the watch: =bun run --bun shadow-cljs watch= starts node, which starts the JVM, and only signalling the group reaches all three. One script covers Bun and the watch, so Bun's command line stays plain. tmk chose guarding both on [2026-10-29 Thu]; the alternative was guarding Bun only and recording the watch orphan as a known limit.
 
