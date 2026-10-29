@@ -1,0 +1,86 @@
+:PROPERTIES:
+:ID:       20261029T225947.782677
+:CREATED:  [2026-10-29 Thu 22:59]
+:END:
+#+TITLE: Review — The fork drops the managed runtime — implementation plan
+#+ARTEFACT: my:shadow-cljs/docs/plans/2026/2026-10/2026-10-29-drop-managed-runtime.org
+#+ARTEFACT_ID: 20261029T220537.596609
+
+#+BEGIN: columnview :id global :maxlevel 2 :format "%40ITEM %DISPOSITION %SURFACE %COMMIT"
+| <40>                                                                                         |             |         |        |
+| ITEM                                                                                         | DISPOSITION | SURFACE | COMMIT |
+|----------------------------------------------------------------------------------------------+-------------+---------+--------|
+| Round 1                                                                                      |             |         |        |
+| Finding 1 — [P2] Reconcile the documentation grep with the required historical section       |             |         |        |
+| Finding 2 — [P2] Prove that the first-compile evaluation answers before compilation finishes |             |         |        |
+#+END:
+
+* Round 1
+:PROPERTIES:
+:CUSTOM_ID: r1
+:DISPATCHED: [2026-10-29 Thu 22:59]
+:REVIEWED_AT: 8dd668cc12e8482e2c7763b9e009e88c19389ffa
+:GROUNDING: evident
+:PROMPT: [[my:shadow-cljs/docs/plans/2026/2026-10/2026-10-29-drop-managed-runtime-review-rounds/2026-10-29-drop-managed-runtime-review-round-01-prompt.md]]
+:RESULT: [[my:shadow-cljs/docs/plans/2026/2026-10/2026-10-29-drop-managed-runtime-review-rounds/2026-10-29-drop-managed-runtime-review-round-01-result.json]]
+:REVIEWER: codex
+:REVIEWER_VERSION: codex-cli 0.165.0
+:REVIEWER_MODEL: gpt-6-astra
+:REVIEWER_EFFORT: medium
+:REVIEWER_ISOLATED: yes
+:VERDICT: needs-attention
+:FINDINGS: 2
+:END:
+Reviewed [[orgit-blob:~/dev/my/shadow-cljs::8dd668cc12e8482e2c7763b9e009e88c19389ffa/docs/plans/2026/2026-10/2026-10-29-drop-managed-runtime.org][the artefact at 8dd668cc]].
+
+#+begin_example
+tmk, two load-bearing issues in the plan: an impossible documentation acceptance check and incomplete coverage of evaluation during compilation. No files changed.
+#+end_example
+
+** Finding 1 — [P2] Reconcile the documentation grep with the required historical section
+:PROPERTIES:
+:CUSTOM_ID: r1-f1
+:CONFIDENCE: 1
+:RAW_FILE: docs/plans/2026/2026-10/2026-10-29-drop-managed-runtime.org
+:RAW_LINES: 426-426
+:LOCATION: [[orgit-blob:~/dev/my/shadow-cljs::8dd668cc12e8482e2c7763b9e009e88c19389ffa/docs/plans/2026/2026-10/2026-10-29-drop-managed-runtime.org#426-426]]
+:END:
+#+begin_example
+Task 2 step 3 requires adding “Rejected: a managed runtime” and a link whose filename contains “managed”. Both match step 1’s case-insensitive search across doc/. Step 6 therefore cannot print nothing and exit 1 after the prescribed edits. The State table’s expected zero matches has the same contradiction.
+#+end_example
+
+#+begin_example
+Explicitly allow the historical section and its citation, while checking that active behavior descriptions and removed symbol references are gone. Update the expected grep result accordingly.
+#+end_example
+
+*Digest.*
+- Frame: Task 2 ([[my:shadow-cljs/docs/plans/2026/2026-10/2026-10-29-drop-managed-runtime.org::#task-2]]) uses one grep for the word "managed" as its RED and GREEN: step 1 prints the work list, and step 6 expects it to print nothing once the docs are rewritten.
+- Concern: step 3 itself tells the implementer to add a section titled "Rejected: a managed runtime" to the architecture doc and to cite the design by its path, whose filename contains "drop-managed-runtime". Both match the grep, so following step 3 makes step 6 fail by construction.
+- Position: material and new: an implementer hits a GREEN that can never pass. The rewrite itself holds; only the acceptance check is wrong.
+- Options: (a, lean) step 6 expects the grep to match only inside the architecture doc's new "Rejected: a managed runtime" section, checked mechanically: the grep over every path but that doc prints nothing, and in that doc every match sits under the new heading. The State table's "After" says the same. (b) Avoid the word: title the section differently and cite the design without its path. Cheaper, but it hides the history behind a euphemism and drops the citation the house rules ask for.
+- Question: narrow step 6's expectation to the new section, as in (a)?
+
+** Finding 2 — [P2] Prove that the first-compile evaluation answers before compilation finishes
+:PROPERTIES:
+:CUSTOM_ID: r1-f2
+:CONFIDENCE: 0.98
+:RAW_FILE: docs/plans/2026/2026-10/2026-10-29-drop-managed-runtime.org
+:RAW_LINES: 230-234
+:LOCATION: [[orgit-blob:~/dev/my/shadow-cljs::8dd668cc12e8482e2c7763b9e009e88c19389ffa/docs/plans/2026/2026-10/2026-10-29-drop-managed-runtime.org#230-234]]
+:END:
+#+begin_example
+The test checks :last-build-provides before opening the nREPL connection, cloning a session, selecting the build, and sending the evaluation. Compilation can finish between that check and the actual request. It also asserts only the eventual error text, so an implementation that waits for compilation before returning that error can pass. This leaves Review Focus item 1’s explicit “not a wait” contract unverified; deleting the cache only makes the race less likely.
+#+end_example
+
+#+begin_example
+Define deterministic coordination with the real compilation so the request and response occur while compilation remains in progress, and bound the response time. Ensure the test fails if evaluation waits for compilation to finish.
+#+end_example
+
+*Digest.*
+- Frame: Task 1's =an-eval-during-the-first-compile-gets-no-runtime= ([[my:shadow-cljs/docs/plans/2026/2026-10/2026-10-29-drop-managed-runtime.org::#task-1]], step 2) backs Review Focus item 1: an eval sent during the first compile gets upstream's "No available JS runtime", not a wait. It checks the compile has not finished, then evaluates and checks the message.
+- Concern: the "not finished" check runs /before/ the eval, so it says nothing about when the answer came. An implementation that waited for the compile and then answered "no runtime" would pass. The test pins the message, not the "not a wait" part of the contract.
+- Position: material and new: a false green against the exact behaviour the fork is removing, which is a wait. The test's shape holds; one assertion is in the wrong place.
+- Options: (a, lean) subtractive: move the =:last-build-provides= check to /after/ the eval. If the answer arrived after the compile, the check fails, so a waiting implementation can no longer pass. The only remaining race goes the safe way: a compile fast enough to finish first fails the test loudly instead of passing it, and the deleted cache keeps the compile near 3 s. Re-run the plan spike to confirm it passes on Task 1's tree. (b) The reviewer's deterministic coordination: a build hook that holds the compile until the eval has answered. Airtight, but it adds a hook namespace to =src/repl= for one test.
+- Question: move the check after the eval, as in (a), and confirm it in the spike?
+
+
