@@ -7,15 +7,15 @@
 #+ARTEFACT_ID: 20261028T164829.836099
 
 #+BEGIN: columnview :id global :maxlevel 2 :format "%40ITEM %DISPOSITION %SURFACE %COMMIT"
-| <40>                                                                            |             |         |        |
-| ITEM                                                                            | DISPOSITION | SURFACE | COMMIT |
-|---------------------------------------------------------------------------------+-------------+---------+--------|
-| Round 1                                                                         |             |         |        |
-| Finding 1 — [P1] Keep guards alive until descendant cleanup finishes            |             |         |        |
-| Finding 2 — [P2] Define shutdown when bb dev owns the shared server             |             |         |        |
-| Finding 3 — [P2] Establish the ordering behind the compile-line guarantee       |             |         |        |
-| Finding 4 — [P2] Preserve executable evidence for the observed lifecycle claims |             |         |        |
-| Finding 5 — [P2] Make evidence pipelines fail when their source lookup fails    |             |         |        |
+| <40>                                                                            |             |         |          |
+| ITEM                                                                            | DISPOSITION | SURFACE | COMMIT   |
+|---------------------------------------------------------------------------------+-------------+---------+----------|
+| Round 1                                                                         |             |         |          |
+| Finding 1 — [P1] Keep guards alive until descendant cleanup finishes            |             |         |          |
+| Finding 2 — [P2] Define shutdown when bb dev owns the shared server             |             |         |          |
+| Finding 3 — [P2] Establish the ordering behind the compile-line guarantee       |             |         |          |
+| Finding 4 — [P2] Preserve executable evidence for the observed lifecycle claims |             |         |          |
+| Finding 5 — [P2] Make evidence pipelines fail when their source lookup fails    | fixed       | new     | [[orgit-rev:~/dev/my/shadow-cljs::47dba77d480f4439c66c79b332731c2f7af1006a][47dba77d]] |
 #+END:
 
 * Round 1
@@ -139,6 +139,9 @@ Include bounded, isolated probes with cleanup and explicit prerequisites for gua
 :RAW_FILE: docs/specs/2026/2026-10/2026-10-28-drop-managed-runtime-design.org
 :RAW_LINES: 483-491
 :LOCATION: [[orgit-blob:~/dev/my/shadow-cljs::aa24ed3b08688f34a9176e6edcc8066ab32fbede/docs/specs/2026/2026-10/2026-10-28-drop-managed-runtime-design.org#483-491]]
+:SURFACE: new
+:DISPOSITION: fixed
+:COMMIT: [[orgit-rev:~/dev/my/shadow-cljs::47dba77d480f4439c66c79b332731c2f7af1006a][47dba77d]]
 :END:
 #+begin_example
 Several blocks pipe Git through grep and sed under set -e. A missing checkout or pinned commit can make Git fail while the final sed succeeds, so the block returns success with missing evidence. This particularly affects another machine without all four repositories at the hard-coded paths.
@@ -154,4 +157,6 @@ Check repository and commit prerequisites explicitly and propagate failures from
 - Position: material and new, and true of every piped block. The audit would still show drift, since the output changes, but as missing lines rather than as a failure that names the cause.
 - Options: (a, lean) add =set -o pipefail= as each piped block's second line. zsh and bash both accept it, and the mandated first line stays =set -e=. Re-run each block and get a green audit. (b) Explicit precondition checks per repository, which take more lines and give the same result.
 - Question: add pipefail to every piped block, as in (a)?
+
+*Action.* Fixed as (a), routed by tmk in bulk: =set -o pipefail= follows =set -e= in the nine blocks that pipe, every one but =ev-bun-refused=, found with an awk pass keyed on each block's =#+name:=. Before adding it, every piped =git grep= was checked to match at least once, so pipefail turns no legitimate empty result into a failure. Each of the nine was re-executed with the audit's recipe; every result came back byte-identical, and the audit is green. The reviewer's other route, explicit per-repository precondition checks, was not taken, since pipefail surfaces the same failures in one line.
 
