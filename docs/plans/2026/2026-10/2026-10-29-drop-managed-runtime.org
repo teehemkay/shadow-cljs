@@ -390,7 +390,7 @@ git commit -m "feat!: a watched build starts no process; the fork drops the mana
 
 | What                                  | Before (after Task 1)                    | After          |
 |---------------------------------------+------------------------------------------+----------------|
-| Lines the step 1 grep prints           | 34: 26 in the architecture doc, 6 in =js-runtime.md=, 1 each in the README and =websocket.clj= ([[my:shadow-cljs/docs/explorations/2026/2026-10/2026-10-29-drop-managed-runtime-plan-spike.org::#round-4][verified: round 4]]) | none           |
+| Lines the step 1 grep prints           | 34: 26 in the architecture doc, 6 in =js-runtime.md=, 1 each in the README and =websocket.clj= ([[my:shadow-cljs/docs/explorations/2026/2026-10/2026-10-29-drop-managed-runtime-plan-spike.org::#round-4][verified: round 4]]) | only lines under the architecture doc's "Rejected: a managed runtime" heading |
 
 - [ ] *Step 1: RED, the work list.* =git grep -n -i managed -- doc README.md src/main/shadow/cljs/devtools/server src/main/shadow/build src/repl src/test .github docs/clojars-publishing.org ':!src/test/shadow/build/npm_test.clj'=. The excluded file's one match is upstream's =:managed-by= option, unrelated to the runtime. Expected: every line it prints sits in =doc/js-runtime.md=, =doc/js-runtime-architecture.md=, =README.md= or =websocket.clj=, as the State table counts.
 
@@ -408,7 +408,7 @@ git commit -m "feat!: a watched build starts no process; the fork drops the mana
   - Runtime Connection: a process running the output stays alive through the client's own 1 s idle interval (=shadow.cljs.devtools.client.shared/start-idle= sets it; =stop-runtime!= alone clears it), so a client that gave up retrying leaves the process up and disconnected.
   - Process Ownership: the watched-build row's owner is whatever started the output.
   - Scope, Future Considerations and Extension Points lose every mention of the bootstrap and of =start-managed-runtime=.
-  - Add a short section, "Rejected: a managed runtime", in the doc's own "built and removed" style: earlier fork releases started and stopped a process per watched build in the worker; it cost most of the fork's diff against upstream and the conflict surface of every sync, so starting the output moved out of the JVM. Cite the design by its path, =docs/specs/2026/2026-10/2026-10-28-drop-managed-runtime-design.org=, since Markdown cannot follow an org id.
+  - Add a short section whose heading reads exactly =Rejected: a managed runtime=, since step 6 finds it by that title, in the doc's own "built and removed" style: earlier fork releases started and stopped a process per watched build in the worker; it cost most of the fork's diff against upstream and the conflict surface of every sync, so starting the output moved out of the JVM. Cite the design by its path, =docs/specs/2026/2026-10/2026-10-28-drop-managed-runtime-design.org=, since Markdown cannot follow an org id.
 
 - [ ] *Step 4: =README.md= and =websocket.clj=.* Exact replacements:
   - README, the AI-assistance note: =(the `:js-runtime` option, the worker-managed Bun runtime, and their tests, CI and docs)= becomes =(the `:js-runtime` option and its tests, CI and docs)=.
@@ -423,7 +423,16 @@ git commit -m "feat!: a watched build starts no process; the fork drops the mana
 
 - [ ] *Step 5: =todo.org=.* Close [[id:20261018T195432.672778][the managed runtime's two known limitations]]: =TODO= becomes =DONE=, a =CLOSED:= stamp minted by ~LC_ALL=C date '+[%Y-%m-%d %a %H:%M]'~ goes on the line under the heading, and the body gains one line: the managed runtime they describe is gone, per [[id:20261028T164829.836099][the drop-managed-runtime design]]. Run =bd org emphasis-check todo.org= afterwards; expected exit 0.
 
-- [ ] *Step 6: GREEN.* The step 1 grep prints nothing and exits 1. =lein test= through the log line: =exit 0=, =Ran 69 tests containing 209 assertions.= =0 failures, 0 errors.= =clj-kondo --lint src/main/shadow/cljs/devtools/server/web/websocket.clj= exits 0.
+- [ ] *Step 6: GREEN.* The step 1 grep may match only inside the section step 3 adds, whose title and design citation both carry the word. Two checks, both printing nothing:
+  - the step 1 grep with =':!doc/js-runtime-architecture.md'= appended to its pathspecs, which also exits 1;
+  - every match in that doc sits under the new heading:
+
+#+begin_src shell
+awk 'tolower($0) ~ /^#+ / {inside = (tolower($0) ~ /^#+ rejected: a managed runtime$/)}
+     tolower($0) ~ /managed/ && !inside {print FILENAME ":" FNR ": " $0}' doc/js-runtime-architecture.md
+#+end_src
+
+  Then =lein test= through the log line: =exit 0=, =Ran 69 tests containing 209 assertions.= =0 failures, 0 errors.= =clj-kondo --lint src/main/shadow/cljs/devtools/server/web/websocket.clj= exits 0.
 
 - [ ] *Step 7: Commit.*
 
