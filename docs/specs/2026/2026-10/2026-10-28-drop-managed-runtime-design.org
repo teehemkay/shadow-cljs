@@ -45,6 +45,7 @@ The fork's =src/main= diff against its last upstream merge, =f2fbb3a9=, at the f
 #+name: ev-fork-footprint
 #+begin_src shell :results output
 set -e
+set -o pipefail
 # The fork's src/main changes since its last upstream merge, per file,
 # between two fixed commits so the table never moves.
 cd ~/dev/my/shadow-cljs
@@ -85,6 +86,7 @@ Where the managed runtime and the selector's two process sites live, by symbol:
 #+name: ev-runtime-sites
 #+begin_src shell :results output
 set -e
+set -o pipefail
 # Files naming the managed runtime and the selector's two argv helpers,
 # at the fork's fixed commit, with match counts.
 cd ~/dev/my/shadow-cljs
@@ -129,6 +131,7 @@ Every consumer starts its dev build through the CLI, not through =shadow.cljs.de
 #+name: ev-consumer-entry
 #+begin_src shell :results output
 set -e
+set -o pipefail
 # Each consumer's bb dev task, at fixed commits of each main branch.
 for pair in kiln:e021333dff93df934423f9378fa16ac52dd03ec5 \
             ik:1d76352639252f16be1e24ea47e795267b10c2c8 \
@@ -150,6 +153,7 @@ The watch prints one line per compile of each build. These are the lines the lau
 #+name: ev-build-lines
 #+begin_src shell :results output
 set -e
+set -o pipefail
 # The watch's per-compile lines, in shadow.cljs.devtools.server.util at
 # the fork's fixed commit.
 git -C ~/dev/my/shadow-cljs show ae2f64e999fdc810ef950f6b61e444be472e5475:src/main/shadow/cljs/devtools/server/util.clj \
@@ -165,6 +169,7 @@ shadow's node client, which =out/dev.js= carries, already reports what an agent 
 #+name: ev-client-signals
 #+begin_src shell :results output
 set -e
+set -o pipefail
 # The node client's connect, retry, give-up and stale signals, at the
 # fork's fixed commit. These files are upstream's, unchanged by the fork.
 for f in node shared; do
@@ -248,6 +253,7 @@ The selector stays as it is: the =:js-runtime= key and its spec, the =--js-runti
 #+name: ev-guarded-handler-reason
 #+begin_src shell :results output
 set -e
+set -o pipefail
 # The commit that added the guarded handler: its subject and first paragraph.
 git -C ~/dev/my/shadow-cljs show -s --format=%B bd4c8e799254ff1d469a035caa5fcd75eb45fe46 | sed -n '1,9p'
 #+end_src
@@ -302,6 +308,7 @@ The launcher gives the watch a stdin pipe it holds open for its whole life. A wa
 #+name: ev-watch-stdin
 #+begin_src shell :results output
 set -e
+set -o pipefail
 # The CLI watch's stdin poll, in shadow.cljs.devtools.server/from-cli at
 # the fork's fixed commit. Upstream's code, unchanged by the fork.
 git -C ~/dev/my/shadow-cljs show ae2f64e999fdc810ef950f6b61e444be472e5475:src/main/shadow/cljs/devtools/server.clj \
@@ -352,6 +359,7 @@ The launcher runs =<program> <output-to>=, such as =bun out/dev.js=, with no boo
 #+name: ev-client-keepalive
 #+begin_src shell :results output
 set -e
+set -o pipefail
 # The client's idle interval and the one place that clears it, in
 # shadow.cljs.devtools.client.shared at the fork's fixed commit.
 git -C ~/dev/my/shadow-cljs show ae2f64e999fdc810ef950f6b61e444be472e5475:src/main/shadow/cljs/devtools/client/shared.cljs \
@@ -476,6 +484,7 @@ Every instruction surface that says =(shadow/repl …)= launches a managed Bun p
 #+name: ev-managed-mentions
 #+begin_src shell :results output
 set -e
+set -o pipefail
 # Instruction surfaces mentioning the managed runtime or running
 # bun out/dev.js, with match counts, at fixed commits of each main
 # branch. History (docs/plans, journals, progress archives, transcripts)
