@@ -1,0 +1,591 @@
+:PROPERTIES:
+:ID:       20261029T220538.607311
+:CREATED:  [2026-10-29 Thu 22:05]
+:END:
+
+#+TITLE: The fork drops the managed runtime — plan spike
+#+SUBTITLE: The plan's two tasks run in plan order in throwaway clones, so a cross-task defect or a wrong count surfaces before review
+#+SPIKE_FORMAT: spike/1
+#+ORG_VERSION: 9.8.9-??-7427df2d9
+#+DATE: [2026-10-29 Thu]
+#+OPTIONS: toc:2 num:nil
+#+STARTUP: overview
+
+*For agentic workers:* re-run with =bd org spike-verify= on this file; =--write= refreshes every result from execution, unless it prints =not written:= with the reason. Each round clones this repository and runs Leiningen and shadow's server, so give the run =--timeout-ms 1800000=.
+
+*Serves:* [[id:20261029T220537.596609][the drop-managed-runtime implementation plan]]. Each round's Impact is read against it.
+
+*Language set:* =shell=. Every round is a standalone shell block that clones the repository at the plan's base commit into a temp directory it removes, applies the earlier tasks through the library's functions, then runs its own task's checks.
+
+*Not exercised here.* The REPL steps (Task 1, steps 3 and 6), which need a live nREPL; the runner steps cover the same assertions in a fresh JVM. Task 2's prose rewrites of the two =doc/= files, which a reader judges; round 4 settles their work list and applies the task's exact replacements.
+
+* Goals
+
+1. [[#round-1][Today's CI suites pass at the base, and which non-test lines they log]] — =shell= — status: explored
+2. [[#round-2][Task 1's runner RED is four named assertion failures, not a load error]] — =shell= — status: explored
+3. [[#round-3][Task 1 reaches GREEN on CI's suite list and lein test, with its checks clean]] — =shell= — status: explored
+4. [[#round-4][Task 2's work list, and its exact replacements on Task 1's tree]] — =shell= — status: explored
+
+* Library
+
+Shell functions. Run on their own, these blocks only define functions and print nothing.
+
+#+name: lib-common
+#+begin_src shell :results output
+# Clone the fork at the plan's base commit into $1. Pinned, so the rounds
+# replay against the tree the plan was written for however far the branch
+# moves.
+clone_fork() {
+  git clone -q ~/dev/my/shadow-cljs "$1" &&
+    git -C "$1" checkout -q 872ad618b9d1c82fae6fcb3cef94f2c84017f327
+}
+# The namespaces CI's repl-tests job runs, read from the clone's own ci.yml:
+# the plan keeps that step as the one list.
+ci_suites() {
+  awk '/run -m shadow.cljs.server-test-runner$/ {on=1; next}
+       on && /^ +shadow\.cljs\.[a-z-]+$/ {print $1; next}
+       {on=0}' .github/workflows/ci.yml
+}
+# Run a command with its whole output in $LOG, then print its exit status.
+# Its stdin is /dev/null: Babel hands the block's body to the shell on
+# stdin, and lein's JVM would otherwise read the rest of the round away.
+logged() { "$@" < /dev/null > "$LOG" 2>&1; echo "exit $?"; }
+run_suites() { logged env REQUIRE_BUN=1 lein with-profile +repl-tests run -m shadow.cljs.server-test-runner "$@"; }
+# The run's verdict: each failing test's name and the tally.
+verdict() {
+  grep -E '^(FAIL|ERROR) in |^Ran |failures, ' "$LOG" | sed -E 's/ \([a-z_]+\.clj:[0-9]+\)$//'
+}
+# Every line a pristine-output scan flags, timestamps normalized. Left out:
+# compile and tally lines, lein test's per-namespace headers (one namespace
+# is named js-runtime-warning-test), and port 9630's warning, which depends
+# on what else runs on the machine and which the plan's Global Constraints
+# name.
+scan() {
+  grep -i -E 'warn|error|exception|traceback' "$LOG" \
+    | grep -v -E '^\[:[a-z-]+\] Build completed\.|^[0-9]+ failures, [0-9]+ errors\.$|^lein test |TCP Port 9630 in use' \
+    | sed -E 's/^\[[0-9-]+ [0-9:.]+ - /[<time> - /' \
+    | sort | uniq -c | sed -E 's/^ +//'
+  echo "scan done"
+}
+#+end_src
+
+#+RESULTS: lib-common
+
+#+name: lib-task1
+#+begin_src shell :results output
+# Task 1, steps 1 and 2: the probe and the new suite, as the plan gives them.
+task1_red() {
+  cat > src/repl/shadow/cljs/js_runtime_watch_probe.cljs <<'CLJS'
+(ns shadow.cljs.js-runtime-watch-probe
+  "The :main of js-runtime-watch-test's :node-script builds. Empty: the
+  tests need only a build whose output carries the REPL client.")
+
+(defn main [& _])
+CLJS
+  cat > src/repl/shadow/cljs/js_runtime_watch_test.clj <<'CLJ'
+(ns shadow.cljs.js-runtime-watch-test
+  "A watched build carrying :js-runtime behaves as upstream's does: the
+  watch compiles and nothing starts a process, so an eval with no connected
+  runtime fails at once with upstream's message. Whatever runs the build's
+  output owns that process, and the runtime it hosts is evaluated in as any
+  other. Editors are driven as a real nREPL client against shadow's own
+  nREPL server, the way CIDER's nrepl-select connects.
+
+  Needs a running shadow-cljs server (its nREPL port is read from
+  .shadow-cljs/nrepl.port) and bun on PATH; without bun it passes vacuously."
+  (:require
+    [clojure.java.io :as io]
+    [clojure.string :as str]
+    [clojure.test :refer [deftest is testing]]
+    [nrepl.core :as nrepl]
+    [shadow.cljs.devtools.api :as api]
+    [shadow.cljs.devtools.server.repl-impl :as repl-impl]
+    [shadow.cljs.devtools.server.runtime :as runtime]
+    [shadow.cljs.test-util :refer [bun-available?]]))
+
+(defn- shadow-nrepl-port []
+  (parse-long (str/trim (slurp ".shadow-cljs/nrepl.port"))))
+
+(defn- script-config
+  "A :node-script build whose output carries the REPL client."
+  [build-id]
+  {:build-id build-id
+   :target :node-script
+   :main 'shadow.cljs.js-runtime-watch-probe/main
+   :output-to (str "target/" (name build-id) "/script.js")
+   :js-runtime :bun})
+
+(defn- eval-after-select
+  "Clone a session on shadow's nREPL, select BUILD-ID with nrepl-select, then
+  evaluate CODE as ClojureScript. Returns CODE's :out and :err."
+  [build-id code]
+  (with-open [conn (nrepl/connect :port (shadow-nrepl-port))]
+    (let [session (nrepl/client-session (nrepl/client conn 60000))
+          run #(nrepl/combine-responses (nrepl/message session {:op "eval" :code %}))]
+      (run (format "(shadow.cljs.devtools.api/nrepl-select %s)" build-id))
+      (select-keys (run code) [:out :err]))))
+
+(defn- timed
+  "[result elapsed-ms] of calling F."
+  [f]
+  (let [start (System/currentTimeMillis)
+        result (f)]
+    [result (- (System/currentTimeMillis) start)]))
+
+(defn- poll
+  "The first truthy value of F within TIMEOUT-MS, or nil."
+  [timeout-ms f]
+  (let [deadline (+ (System/currentTimeMillis) timeout-ms)]
+    (loop []
+      (or (f)
+          (when (< (System/currentTimeMillis) deadline)
+            (Thread/sleep 50)
+            (recur))))))
+
+(defn- await-runtime
+  "The first REPL runtime connected to BUILD-ID within TIMEOUT-MS, or nil."
+  [build-id timeout-ms]
+  (poll timeout-ms #(->> (api/repl-runtimes build-id) (map :client-id) first)))
+
+(defn- when-bun
+  "Calls F, or passes vacuously when bun is not installed."
+  [f]
+  (if-not (bun-available?)
+    (testing "Bun not installed"
+      (is true))
+    (f)))
+
+(defn- with-watched-build
+  "Watch CONFIG, compiled once, call F with it, and stop the worker. CLI-OPTS
+  go to api/watch. Without bun, F does not run and the test passes
+  vacuously."
+  ([config f] (with-watched-build config {} f))
+  ([{:keys [build-id] :as config} cli-opts f]
+   (when-bun
+     (fn []
+       (try
+         ;; a worker left by an aborted run would ignore CLI-OPTS; failing
+         ;; here still stops it, so the next run starts clean
+         (assert (= :watching (api/watch config (merge {:autobuild false :sync true} cli-opts)))
+                 (str build-id " was already being watched"))
+         (f config)
+         (finally
+           (api/stop-worker build-id)))))))
+
+(def ^:private no-runtime-message
+  "No available JS runtime.\nSee https://shadow-cljs.github.io/docs/UsersGuide.html#repl-troubleshooting")
+
+(def ^:private connect-window-ms
+  "Long enough for a process started at the end of the compile to connect: a
+  cold bun start loading a dev build takes about a second."
+  5000)
+
+(def ^:private bun-check "(println (some? js/process.versions.bun))")
+
+(deftest a-watched-build-starts-no-process
+  ;; --js-runtime reaches the build through :config-merge, so the raw build
+  ;; config never carries it; both ways of choosing the runtime are checked
+  (doseq [[label config cli-opts]
+          [["from the build config" (script-config :js-runtime-watch-config) {}]
+           ["from the command line" (dissoc (script-config :js-runtime-watch-cli) :js-runtime)
+            {:config-merge [{:js-runtime :bun}]}]]]
+    (testing label
+      (with-watched-build config cli-opts
+        (fn [{:keys [build-id]}]
+          (is (nil? (await-runtime build-id connect-window-ms))
+              "no runtime connected after the compile"))))))
+
+(deftest an-eval-without-a-runtime-fails-at-once
+  (with-watched-build (script-config :js-runtime-watch-eval)
+    (fn [{:keys [build-id]}]
+      (let [[result ms] (timed #(eval-after-select build-id "(println :unreachable)"))]
+        (is (= {:err no-runtime-message} result))
+        (is (< ms 2000) "answered without waiting for a runtime")))))
+
+(deftest an-eval-during-the-first-compile-gets-no-runtime
+  ;; A tool may select the build and evaluate as soon as the watch's nREPL
+  ;; port is written, while the first compile still runs. Nothing in the
+  ;; fork waits for a runtime on the tool's behalf: it polls
+  ;; api/repl-runtimes itself. Every other test here watches with :sync
+  ;; true, which hides this; deleting the build's cache keeps the compile
+  ;; slow enough to evaluate during it.
+  (let [build-id :js-runtime-watch-first-compile]
+    (doseq [f (reverse (file-seq (io/file (get-in (runtime/get-instance!) [:config :cache-root])
+                                          "builds" (name build-id))))]
+      (io/delete-file f true))
+    (with-watched-build (script-config build-id) {:sync false}
+      (fn [_]
+        (is (nil? (-> (api/get-worker build-id) :state-ref deref :last-build-provides))
+            "the eval below starts before the first compile ends")
+        (is (= {:err no-runtime-message} (eval-after-select build-id "(println :unreachable)")))))))
+
+(deftest a-runtime-started-on-the-output-is-evaluated-in
+  ;; the contract a launcher relies on: run the output, and the REPL
+  ;; evaluates in what connects
+  (with-watched-build (script-config :js-runtime-watch-by-hand)
+    (fn [{:keys [build-id output-to]}]
+      (let [process (-> (ProcessBuilder. ^java.util.List ["bun" output-to])
+                        (.redirectErrorStream true)
+                        (.redirectOutput java.lang.ProcessBuilder$Redirect/DISCARD)
+                        (.start))]
+        (try
+          (is (some? (await-runtime build-id 10000)) "the process's client connected")
+          (is (= {:out "true\n"} (eval-after-select build-id bun-check)))
+          (finally
+            (.destroyForcibly process)
+            (.waitFor process)))))))
+
+(deftest watching-a-running-build-by-its-config-says-so
+  ;; with-watched-build relies on this to catch a worker left by an
+  ;; aborted run
+  (with-watched-build (script-config :js-runtime-watch-rewatch)
+    (fn [config]
+      (is (= :already-watching (api/watch config {:autobuild false}))))))
+
+(deftest node-repl-evaluates-under-the-selected-runtime
+  ;; Options as the CLI's --js-runtime builds them.
+  (when-bun
+    #(let [build-id :js-runtime-watch-node-repl]
+       ;; node-repl* returns once it has compiled; its process starts behind it
+       (repl-impl/node-repl* (runtime/get-instance!)
+         {:build-id build-id :js-runtime :bun :config-merge [{:js-runtime :bun}]})
+       (try
+         (is (some? (await-runtime build-id 10000)) "its own process connects")
+         (is (= ["true"] (:results (api/cljs-eval build-id "(some? js/process.versions.bun)" {})))
+             "and evaluates under bun")
+         (finally
+           (api/stop-worker build-id))))))
+CLJ
+}
+# Task 1, steps 5, 7 and 8: the managed runtime leaves src/main, its suite
+# leaves src/repl, and the text naming that suite is repointed.
+task1_green() {
+  git checkout -q f2fbb3a9ba7be3f91ff386039020a1632646e458 -- \
+    src/main/shadow/cljs/devtools/server/worker.clj src/main/shadow/cljs/devtools/server/worker/impl.clj
+  git rm -q src/main/shadow/cljs/devtools/server/js_runtime.clj \
+    src/repl/shadow/cljs/managed_runtime_test.clj src/repl/shadow/cljs/managed_runtime_probe.cljs \
+    src/repl/shadow/cljs/managed_runtime_busy_probe.cljs src/repl/shadow/cljs/managed_runtime_exit_probe.cljs
+  python3 -I - <<'PY'
+def edit(path, *pairs):
+    s = open(path).read()
+    for old, new in pairs:
+        assert s.count(old) == 1, (path, old[:70])
+        s = s.replace(old, new)
+    open(path, "w").write(s)
+
+def cut(path, start, end, new):
+    """Replace the text from START up to, not including, END."""
+    s = open(path).read()
+    a = s.index(start)
+    b = s.index(end, a)
+    open(path, "w").write(s[:a] + new + s[b:])
+
+p = "src/main/shadow/cljs/devtools/server/repl_impl.clj"
+edit(p, ("    [clojure.string :as str]\n", ""))
+s = open(p).read()
+a = s.index("                     (let [;; every REPL frontend's eval passes here")
+end = "                           runtime-id\n"
+b = s.index(end, a)
+open(p, "w").write(s[:a] + "                     (let [runtime-id\n" + s[b + len(end):])
+cut(p, "                         (do (repl-stderr repl-state\n                               (cond",
+    "                             (repl-result repl-state nil)",
+    '                         (do (repl-stderr repl-state "No available JS runtime.\\nSee https://shadow-cljs.github.io/docs/UsersGuide.html#repl-troubleshooting")\n')
+edit(p, ("                             (recur (assoc repl-state ::last-no-runtime-reason no-runtime-reason)))",
+         "                             (recur repl-state))"))
+cut(p, "        (super/start-worker supervisor build-config\n          (-> opts",
+    "        result\n        (worker/compile! worker)",
+    "        (super/start-worker supervisor build-config (assoc opts ::node-repl true))\n\n")
+
+edit("src/main/shadow/build/targets/shared.clj",
+     ("(defn explicit-js-runtime? [build-config]\n  (contains? build-config :js-runtime))\n\n", ""),
+     ("(defn managed-runtime? [build-config]\n  (and (node-family-target? build-config)\n       (explicit-js-runtime? build-config)))\n\n", ""))
+
+p = "src/repl/shadow/cljs/js_runtime_test.clj"
+cut(p, "(deftest test-managed-runtime-is-opt-in", "(deftest test-node-script-target-spec-accepts-js-runtime", "")
+edit(p, ("    [shadow.build.targets.shared :as shared]\n    [shadow.cljs.devtools.server.js-runtime :as js-runtime]))",
+         "    [shadow.build.targets.shared :as shared]))"),
+        ("[clojure.test :refer [deftest is testing]]", "[clojure.test :refer [deftest is]]"))
+
+edit(".github/workflows/ci.yml",
+     ("  # src/repl holds the fork's managed-runtime suites, which need a running\n",
+      "  # src/repl holds the fork's server-backed suites, which need a running\n"),
+     ("    # autorun-test and the managed runtimes wait on child processes with\n    # no limit of their own\n",
+      "    # autorun-test and the runtimes the suites start wait on child processes\n    # with no limit of their own\n"),
+     ("          shadow.cljs.managed-runtime-test\n", "          shadow.cljs.js-runtime-watch-test\n"))
+
+edit("src/repl/shadow/cljs/server_test_runner.clj",
+     ("shadow.cljs.managed-runtime-test needs a server", "shadow.cljs.js-runtime-watch-test needs a server"))
+
+edit("src/test/shadow/cljs/devtools/server/web/websocket_test.clj",
+     ("  console, and returns [F's result, the records]. A copy of the\n  managed-runtime tests' launch-failure capture rather than a shared one:\n  those live in src/repl, which lein test does not load.\"",
+      "  console, and returns [F's result, the records].\""))
+
+p = "docs/clojars-publishing.org"
+cut(p, "The managed runtime widened that surface", "\n",
+    "Read upstream's changes to every file the fork edits even when they auto-merge; =git diff --stat $(git merge-base master upstream/master) master -- src/main= lists them.")
+edit(p, ("The fork's managed-runtime suites live", "The fork's server-backed suites live"),
+        ("upstream's worker changes", "upstream's REPL and worker changes"),
+        ("     shadow.cljs.managed-runtime-test \\\n", "     shadow.cljs.js-runtime-watch-test \\\n"))
+PY
+}
+#+end_src
+
+#+RESULTS: lib-task1
+
+#+name: lib-task2
+#+begin_src shell :results output
+# Task 2, step 4: its two exact replacements. Steps 2 and 3 are prose a
+# reader judges, so the rounds leave them out.
+task2_exact() {
+  python3 -I - <<'PY'
+def edit(path, old, new):
+    s = open(path).read()
+    assert s.count(old) == 1, (path, old[:70])
+    open(path, "w").write(s.replace(old, new))
+
+edit("README.md",
+     "(the `:js-runtime` option, the worker-managed Bun runtime, and their tests, CI and docs)",
+     "(the `:js-runtime` option and its tests, CI and docs)")
+edit("src/main/shadow/cljs/devtools/server/web/websocket.clj",
+     "The managed runtime makes that routine,\n"
+     "  since the worker kills its own JS process while messages to it may still\n"
+     "  be queued. It also closes the websocket whenever the write loop ends,\n"
+     "  where upstream leaves a client the relay dropped connected but deaf.",
+     "A runtime that crashes, or that whatever\n"
+     "  started it restarts or stops, is such a peer. It also closes the\n"
+     "  websocket whenever the write loop ends, where upstream leaves a client\n"
+     "  the relay dropped connected but deaf.")
+PY
+}
+# Task 2, step 1: the grep whose output is the task's work list. npm_test's
+# one match is upstream's :managed-by option, unrelated to the runtime.
+task2_grep() {
+  git grep -n -i managed -- doc README.md src/main/shadow/cljs/devtools/server src/main/shadow/build \
+    src/repl src/test .github docs/clojars-publishing.org ':!src/test/shadow/build/npm_test.clj'
+}
+#+end_src
+
+#+RESULTS: lib-task2
+
+* Round 1: Today's CI suites at the base
+:PROPERTIES:
+:CUSTOM_ID: round-1
+:END:
+
+- *Goal:* establish that the base commit's CI suite list is green, and which non-test lines its log carries, so the plan's pristine-output constraint names only lines that already exist.
+- *Language:* =shell=, standalone.
+- *Approach:* clone at the base and run CI's =repl-tests= list exactly as the job does, through the runner; print the verdict and the scan.
+
+*Evidence.*
+
+#+name: round-1-baseline
+#+begin_src shell :results output :noweb yes
+set -e
+<<lib-common>>
+d=$(mktemp -d); trap 'rm -rf "$d"' EXIT
+clone_fork "$d/r" && cd "$d/r"
+LOG="$d/run.log"
+set +e
+run_suites $(ci_suites)
+set -e
+verdict
+scan
+#+end_src
+
+#+RESULTS: round-1-baseline
+: exit 0
+: Ran 35 tests containing 100 assertions.
+: 0 failures, 0 errors.
+: scan done
+
+- *Findings:* CI's five namespaces pass at the base commit, 35 tests and 100 assertions, and the scan flags no line of their log. The node-repl test's =node-repl-exit= line is logged at INFO, so no scan for warnings or errors reaches it.
+- *Impact:* the plan's pristine-output constraint cites this round as the clean baseline and names only port 9630's warning, which depends on the machine; the State table of Task 1 carries the baseline tally.
+
+* Round 2: Task 1's runner RED
+:PROPERTIES:
+:CUSTOM_ID: round-2
+:END:
+
+- *Goal:* show that Task 1's new suite loads against today's code and fails on exactly the four assertions the plan names, with no load or compile error.
+- *Language:* =shell=, standalone.
+- *Approach:* clone at the base, apply Task 1's steps 1 and 2 only, and run the runner on =shadow.cljs.js-runtime-watch-test= alone, as Task 1's step 4 does.
+
+*Evidence.*
+
+#+name: round-2-red
+#+begin_src shell :results output :noweb yes
+set -e
+<<lib-common>>
+<<lib-task1>>
+d=$(mktemp -d); trap 'rm -rf "$d"' EXIT
+clone_fork "$d/r" && cd "$d/r"
+task1_red
+LOG="$d/run.log"
+set +e
+run_suites shadow.cljs.js-runtime-watch-test
+set -e
+verdict
+scan
+#+end_src
+
+#+RESULTS: round-2-red
+: exit 1
+: FAIL in (an-eval-during-the-first-compile-gets-no-runtime)
+: FAIL in (an-eval-without-a-runtime-fails-at-once)
+: FAIL in (a-watched-build-starts-no-process)
+: FAIL in (a-watched-build-starts-no-process)
+: Ran 6 tests containing 11 assertions.
+: 4 failures, 0 errors.
+: 1 Error encountered performing task 'run' with profile(s): 'base,system,user,provided,dev,repl-tests'
+: scan done
+
+- *Findings:* the new suite loads against today's code and fails on exactly the four assertions Task 1 names: both cases of =a-watched-build-starts-no-process=, and the =:err= assertions of the two eval tests. No load or compile error. The runner exits 1, and lein appends its own =Error encountered performing task 'run'= line.
+- *Impact:* Task 1's step 4 keeps its expected tally and cites this round; the plan's Global Constraints name lein's line as the one extra a red runner log carries. No stub step is needed.
+
+* Round 3: Task 1's GREEN
+:PROPERTIES:
+:CUSTOM_ID: round-3
+:END:
+
+- *Goal:* show that all of Task 1 leaves CI's suite list and =lein test= green with pristine logs, =repl_impl.clj='s diff at the plan's size, nothing naming the managed runtime's code, and the fork-created files lint-clean.
+- *Language:* =shell=, standalone.
+- *Approach:* clone at the base, apply Task 1 whole, then run its steps 5's check, 9, 10, 11 and 12 in order.
+
+*Evidence.*
+
+#+name: round-3-green
+#+begin_src shell :results output :noweb yes
+set -e
+<<lib-common>>
+<<lib-task1>>
+d=$(mktemp -d); trap 'rm -rf "$d"' EXIT
+clone_fork "$d/r" && cd "$d/r"
+task1_red
+task1_green
+echo "--- step 5: diff against upstream"
+git diff --numstat f2fbb3a9ba7be3f91ff386039020a1632646e458 -- src/main/shadow/cljs/devtools/server/repl_impl.clj \
+  src/main/shadow/cljs/devtools/server/worker.clj src/main/shadow/cljs/devtools/server/worker/impl.clj
+echo "--- step 9: CI's suites"
+ci_suites
+LOG="$d/suites.log"
+set +e
+run_suites $(ci_suites)
+set -e
+verdict
+scan
+echo "--- step 10: lein test"
+LOG="$d/lein-test.log"
+set +e
+logged lein test
+set -e
+verdict
+scan
+echo "--- step 11: names of the managed runtime's code"
+set +e
+git grep -n -e managed-runtime -e await-managed -e managed-build -e server.js-runtime -- src .github docs/clojars-publishing.org
+echo "grep exit $?"
+echo "--- step 12: lint"
+clj-kondo --lint src/repl/shadow/cljs/js_runtime_watch_test.clj src/repl/shadow/cljs/js_runtime_watch_probe.cljs \
+  src/repl/shadow/cljs/js_runtime_test.clj src/repl/shadow/cljs/server_test_runner.clj \
+  src/test/shadow/cljs/devtools/server/web/websocket_test.clj src/main/shadow/cljs/devtools/server/web/websocket.clj \
+  > "$d/kondo.log" 2>&1
+echo "kondo exit $?"
+sed -E 's/linting took [0-9]+ms/linting took <ms>/' "$d/kondo.log"
+#+end_src
+
+#+RESULTS: round-3-green
+#+begin_example
+--- step 5: diff against upstream
+13	5	src/main/shadow/cljs/devtools/server/repl_impl.clj
+--- step 9: CI's suites
+shadow.cljs.js-runtime-watch-test
+shadow.cljs.js-runtime-test
+shadow.cljs.bun-runtime-test
+shadow.cljs.test-util-test
+shadow.cljs.server-test-runner-test
+exit 0
+Ran 18 tests containing 33 assertions.
+0 failures, 0 errors.
+scan done
+--- step 10: lein test
+exit 0
+Ran 69 tests containing 209 assertions.
+0 failures, 0 errors.
+scan done
+--- step 11: names of the managed runtime's code
+grep exit 1
+--- step 12: lint
+kondo exit 0
+linting took <ms>, errors: 0, warnings: 0
+#+end_example
+
+- *Findings:* with Task 1 applied, =repl_impl.clj= is the only one of the three server files still differing from upstream, by 13 lines added and 5 removed. CI's list, read back from the edited =ci.yml=, opens with the new suite and passes: 18 tests, 33 assertions, clean scan. =lein test= passes unchanged at 69 tests and 209 assertions. The grep for the managed runtime's names finds nothing, and the fork-created files lint clean.
+- *Impact:* the plan's step 5 check said 4 removed lines; corrected to 5. Steps 9 to 12 cite this round for their expected output.
+
+* Round 4: Task 2's work list and exact replacements
+:PROPERTIES:
+:CUSTOM_ID: round-4
+:END:
+
+- *Goal:* show what Task 2's step 1 grep prints on Task 1's tree, file by file, and that its exact replacements apply and leave =lein test= and the docstring's lint clean.
+- *Language:* =shell=, standalone.
+- *Approach:* clone at the base, apply Task 1 whole, count the grep's lines per file, apply Task 2's exact replacements, count again, then run =lein test= and lint the docstring's file.
+
+*Evidence.*
+
+#+name: round-4-docs
+#+begin_src shell :results output :noweb yes
+set -e
+<<lib-common>>
+<<lib-task1>>
+<<lib-task2>>
+d=$(mktemp -d); trap 'rm -rf "$d"' EXIT
+clone_fork "$d/r" && cd "$d/r"
+task1_red
+task1_green
+echo "--- step 1 on Task 1's tree, lines per file"
+task2_grep | cut -d: -f1 | sort | uniq -c | sed -E 's/^ +//'
+task2_grep | wc -l | tr -d ' '
+task2_exact
+echo "--- after the exact replacements, lines per file"
+task2_grep | cut -d: -f1 | sort | uniq -c | sed -E 's/^ +//'
+echo "--- lein test"
+LOG="$d/lein-test.log"
+set +e
+logged lein test
+set -e
+verdict
+scan
+clj-kondo --lint src/main/shadow/cljs/devtools/server/web/websocket.clj | sed -E 's/linting took [0-9]+ms/linting took <ms>/'
+#+end_src
+
+#+RESULTS: round-4-docs
+#+begin_example
+--- step 1 on Task 1's tree, lines per file
+26 doc/js-runtime-architecture.md
+6 doc/js-runtime.md
+1 README.md
+1 src/main/shadow/cljs/devtools/server/web/websocket.clj
+34
+--- after the exact replacements, lines per file
+26 doc/js-runtime-architecture.md
+6 doc/js-runtime.md
+--- lein test
+exit 0
+Ran 69 tests containing 209 assertions.
+0 failures, 0 errors.
+scan done
+linting took <ms>, errors: 0, warnings: 0
+#+end_example
+
+- *Findings:* on Task 1's tree, Task 2's grep prints 34 lines: 26 in the architecture doc, 6 in =doc/js-runtime.md=, and one each in the README and =websocket.clj=. Its first run also matched upstream's =:managed-by= option in =src/test/shadow/build/npm_test.clj=, which the grep now excludes. The two exact replacements apply and clear the README and the docstring, leaving the 32 prose lines of the two docs, and =lein test= stays green with =websocket.clj= lint-clean.
+- *Impact:* Task 2's State table carries the count of 34 per file, its step 1 grep gains the =npm_test.clj= exclusion, and its docstring replacement is given as the exact rewrapped lines this round applies.
+
+* Summary
+
+- *Key discoveries:*
+  - The base is green and clean, so every warning in a later log is new ([[#round-1][round 1]]).
+  - Task 1's RED is the four promised assertion failures ([[#round-2][round 2]]), and its GREEN holds on CI's list, =lein test=, the name grep and lint ([[#round-3][round 3]]).
+  - The plan had =repl_impl.clj='s removed-line count wrong, 4 for 5 ([[#round-3][round 3]]), and Task 2's grep caught an unrelated upstream line ([[#round-4][round 4]]).
+  - A Babel shell block that runs lein must give it =/dev/null= as stdin: the first run of this spike lost every line after each lein call.
+- *Updates made:* folded into the plan as =verified:= citations: Global Constraints § Pristine output (round 1); Task 1's State table (round 1), step 4 (round 2), steps 5 and 9 to 12 (round 3); Task 2's State table (round 4).

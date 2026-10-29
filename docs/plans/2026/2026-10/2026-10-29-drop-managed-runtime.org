@@ -1,0 +1,445 @@
+:PROPERTIES:
+:ID:       20261029T220537.596609
+:CREATED:  [2026-10-29 Thu 22:05]
+:END:
+
+#+TITLE: The fork drops the managed runtime — implementation plan
+#+SUBTITLE: Release step 1 of the drop-managed-runtime design: the fork keeps the js-runtime selector and starts no process for a watched build
+#+DATE: [2026-10-29 Thu]
+#+AUTHOR: Claude Code (claude-opus-5-5)
+#+OPTIONS: toc:2 num:nil
+#+STARTUP: content
+
+*For agentic workers:* REQUIRED SUB-SKILL: use =superpowers:subagent-driven-development= (recommended) or =superpowers:executing-plans= to implement this plan task by task. Steps use checkbox (=- [ ]=) syntax for tracking. Each task's methodology is its =Dialect:= skill: =clj-repl-development=.
+
+*Goal:* a watched build carrying =:js-runtime= behaves as upstream's does, compiling and starting no process, while the selector (=:js-runtime=, =--js-runtime=, =:node-test= autorun, =node-repl=) stays.
+
+*Architecture:* the managed runtime lives in four files the fork otherwise leaves alone or barely touches. =worker.clj= and =worker/impl.clj= differ from upstream only by it, so both return to upstream's text at the fork's merge base. =repl_impl.clj= keeps only its =node-repl*= selector hunks. =js_runtime.clj= is deleted, and =shared.clj= loses the two predicates only the managed runtime called. A new server-backed suite replaces the managed runtime's.
+
+*Tech stack:* Clojure on the JVM, Leiningen, shadow-cljs's own server and worker, Bun for the test runtimes.
+
+*Spec:* [[id:20261028T164829.836099][The fork keeps the js-runtime selector and bb dev starts Bun]] ([[my:shadow-cljs/docs/specs/2026/2026-10/2026-10-28-drop-managed-runtime-design.org]]). This plan is release step 1 of its [[my:shadow-cljs/docs/specs/2026/2026-10/2026-10-28-drop-managed-runtime-design.org::#release-order][release order]]; bunbushka's launcher and the consumers' switch are later plans, ruled by tmk on [2026-10-29 Thu]. The release itself, and whether it carries the upstream 3.5.8 sync, is tmk's step under [[my:shadow-cljs/docs/clojars-publishing.org::*Releasing a new version][the publishing doc's release steps]], after this plan merges.
+
+*Plan spike:* [[my:shadow-cljs/docs/explorations/2026/2026-10/2026-10-29-drop-managed-runtime-plan-spike.org][the drop-managed-runtime plan spike]] ran both tasks in order in throwaway clones of this repository.
+
+* Global Constraints
+
+- *Base commit.* Written against =872ad618b9d1c82fae6fcb3cef94f2c84017f327= on branch =drop-managed-runtime=.
+- *Upstream text is restored, never rewritten.* =f2fbb3a9ba7be3f91ff386039020a1632646e458= is upstream's commit and the fork's merge base. Where a file's whole fork diff is the managed runtime, the file returns to its text at that commit.
+- *The selector stays as it is* ([[my:shadow-cljs/docs/specs/2026/2026-10/2026-10-28-drop-managed-runtime-design.org::#keep-selector][keep-selector]]). So do the guarded websocket handler and the printer fix in =server/util.clj= (rows =keep-guarded-handler= and =keep-printer-fix=).
+- *The REPL.* Start one headless nREPL from the repository root, in the background, with its stdin from =/dev/null=: =lein with-profile +cljs,+repl-tests repl :headless=. Pick its =clj= port with =list_nrepl_ports= and pass that =port= on every =clojure_eval= call. Inside it, start shadow's server with =(require '[shadow.cljs.devtools.server :as server] '[shadow.cljs.devtools.config :as config])= then =(server/start! (assoc (config/load-cljs-edn!) :log {:level :info}))=, and stop it with =(server/stop!)=. A suite run through =clojure_eval= takes =timeout_ms 300000=.
+- *One shadow server at a time.* Stop the REPL's server before any runner command below, and start it again after.
+- *The suite runner.* ~REQUIRE_BUN=1 lein with-profile +repl-tests run -m shadow.cljs.server-test-runner <namespaces>~. The namespaces CI runs are the =repl-tests= job's run step in =.github/workflows/ci.yml=, the one list.
+- *The log line.* Every run step writes its whole output to a fresh file and echoes its status and path: ~LOG=$(mktemp "${TMPDIR:-/tmp}/drop-managed-runtime.XXXXXX"); <runner> > "$LOG" 2>&1; echo "exit $? log $LOG"~. Read the whole log afterwards; never pipe a run through =tail=, =head= or =grep=.
+- *Pristine output.* A green log carries no =WARN=, =ERROR= or exception line, today's suites included ([[my:shadow-cljs/docs/explorations/2026/2026-10/2026-10-29-drop-managed-runtime-plan-spike.org::#round-1][verified: round 1]]), with one exception outside the tests' control: =TCP Port 9630 in use.=, when another process on the machine holds that port. A red runner log also ends with lein's own =Error encountered performing task 'run'=. Report any other such line before claiming a run green.
+- *Lint.* =clj-kondo --lint <every .clj/.cljs file the task touches>=. Fork-created files exit 0; in upstream files only findings on lines the diff changes count (tmk's standing exception for this fork, recorded on [2026-10-18 Sun]). Fork-created here: everything under =src/repl=, =server/web/websocket.clj= and its test.
+- *A one-off suite failure on this Mac gets its two captures before any re-run*, per the global rules' MDM paragraph: the run's log, then the kernel log over the run's window.
+- *Deleted tests.* The spec's [[my:shadow-cljs/docs/specs/2026/2026-10/2026-10-28-drop-managed-runtime-design.org::#drop-managed-runtime][drop-managed-runtime]] row removes the =src/repl= suite and its three probes, and "Left to the builder" removes the bootstrap's tests. Task 1 deletes exactly those, plus =test-managed-runtime-is-opt-in=, whose function the same row removes. Nothing else.
+
+* Review Focus
+
+Inputs no task's tests leave alone are the ones a reviewer should check stay covered:
+
+1. An eval sent while the first compile still runs gets upstream's "No available JS runtime", not a wait: =an-eval-during-the-first-compile-gets-no-runtime= (Task 1).
+2. =--js-runtime bun= on a watched =:node-script= starts nothing, exactly as the build-config key does: the "from the command line" case of =a-watched-build-starts-no-process= (Task 1).
+3. A process started on the output by something else connects and is evaluated in under Bun, the contract bunbushka's launcher will rely on: =a-runtime-started-on-the-output-is-evaluated-in= (Task 1).
+4. =node-repl= with =--js-runtime bun= still evaluates under Bun after its =:config-merge= stops being filtered: =node-repl-evaluates-under-the-selected-runtime= (Task 1).
+5. =:node-test= autorun still runs under Bun: =shadow.cljs.bun-runtime-test=, unchanged, in the CI suite list (Task 1).
+
+* Task 1: A watched build starts no process
+:PROPERTIES:
+:CUSTOM_ID: task-1
+:END:
+
+*Dialect:* =clj=. The probe is a =.cljs= file, but only a test's worker compiles it; no ClojureScript REPL loads it, so it gets no =cljs= cycle.
+
+*Files:*
+- Create: =src/repl/shadow/cljs/js_runtime_watch_test.clj=
+- Create: =src/repl/shadow/cljs/js_runtime_watch_probe.cljs=
+- Modify, restored to upstream: =src/main/shadow/cljs/devtools/server/worker.clj=
+- Modify, restored to upstream: =src/main/shadow/cljs/devtools/server/worker/impl.clj=
+- Modify: =src/main/shadow/cljs/devtools/server/repl_impl.clj=
+- Modify: =src/main/shadow/build/targets/shared.clj=
+- Delete: =src/main/shadow/cljs/devtools/server/js_runtime.clj=
+- Delete: =src/repl/shadow/cljs/managed_runtime_test.clj=
+- Delete: =src/repl/shadow/cljs/managed_runtime_probe.cljs=
+- Delete: =src/repl/shadow/cljs/managed_runtime_busy_probe.cljs=
+- Delete: =src/repl/shadow/cljs/managed_runtime_exit_probe.cljs=
+- Modify: =src/repl/shadow/cljs/js_runtime_test.clj=
+- Modify: =src/repl/shadow/cljs/server_test_runner.clj=
+- Modify: =src/test/shadow/cljs/devtools/server/web/websocket_test.clj=
+- Modify: =.github/workflows/ci.yml=
+- Modify: =docs/clojars-publishing.org=
+
+*Interfaces:*
+- Consumes: nothing from another task.
+- Produces: the namespace =shadow.cljs.js-runtime-watch-test= in CI's suite list. Gone afterwards, so Task 2's docs must not name them: the namespace =shadow.cljs.devtools.server.js-runtime=; =worker/await-managed-runtime=; =impl/build-compile*=, =impl/managed-build?=, =impl/start-managed-runtime=, =impl/start-managed-runtime-after-build=, =impl/stop-managed-runtime=, =impl/managed-runtime-running?=, =impl/managed-runtime-connect-ms=; =shared/managed-runtime?= and =shared/explicit-js-runtime?=.
+
+*State:*
+
+| What                        | Before                                   | After                                                       |
+|-----------------------------+------------------------------------------+-------------------------------------------------------------|
+| CI suite list, first entry  | =shadow.cljs.managed-runtime-test=       | =shadow.cljs.js-runtime-watch-test=                         |
+| CI suite run, expected tally | =Ran 35 tests containing 100 assertions.= =0 failures, 0 errors.= ([[my:shadow-cljs/docs/explorations/2026/2026-10/2026-10-29-drop-managed-runtime-plan-spike.org::#round-1][verified: round 1]]) | =Ran 18 tests containing 33 assertions.= =0 failures, 0 errors.= |
+| =lein test= tally            | =Ran 69 tests containing 209 assertions.= | unchanged                                                   |
+
+- [ ] *Step 1: Write the probe.* The =:main= of every build the new suite watches, so a test needs no other source:
+
+#+begin_src clojure
+(ns shadow.cljs.js-runtime-watch-probe
+  "The :main of js-runtime-watch-test's :node-script builds. Empty: the
+  tests need only a build whose output carries the REPL client.")
+
+(defn main [& _])
+#+end_src
+
+- [ ] *Step 2: Write the failing tests.* The whole namespace, since it replaces =managed_runtime_test.clj= and keeps that file's helpers and two of its tests. The helpers are deliberately copied rather than shared: the file they come from is deleted in step 7.
+
+#+begin_src clojure
+(ns shadow.cljs.js-runtime-watch-test
+  "A watched build carrying :js-runtime behaves as upstream's does: the
+  watch compiles and nothing starts a process, so an eval with no connected
+  runtime fails at once with upstream's message. Whatever runs the build's
+  output owns that process, and the runtime it hosts is evaluated in as any
+  other. Editors are driven as a real nREPL client against shadow's own
+  nREPL server, the way CIDER's nrepl-select connects.
+
+  Needs a running shadow-cljs server (its nREPL port is read from
+  .shadow-cljs/nrepl.port) and bun on PATH; without bun it passes vacuously."
+  (:require
+    [clojure.java.io :as io]
+    [clojure.string :as str]
+    [clojure.test :refer [deftest is testing]]
+    [nrepl.core :as nrepl]
+    [shadow.cljs.devtools.api :as api]
+    [shadow.cljs.devtools.server.repl-impl :as repl-impl]
+    [shadow.cljs.devtools.server.runtime :as runtime]
+    [shadow.cljs.test-util :refer [bun-available?]]))
+
+(defn- shadow-nrepl-port []
+  (parse-long (str/trim (slurp ".shadow-cljs/nrepl.port"))))
+
+(defn- script-config
+  "A :node-script build whose output carries the REPL client."
+  [build-id]
+  {:build-id build-id
+   :target :node-script
+   :main 'shadow.cljs.js-runtime-watch-probe/main
+   :output-to (str "target/" (name build-id) "/script.js")
+   :js-runtime :bun})
+
+(defn- eval-after-select
+  "Clone a session on shadow's nREPL, select BUILD-ID with nrepl-select, then
+  evaluate CODE as ClojureScript. Returns CODE's :out and :err."
+  [build-id code]
+  (with-open [conn (nrepl/connect :port (shadow-nrepl-port))]
+    (let [session (nrepl/client-session (nrepl/client conn 60000))
+          run #(nrepl/combine-responses (nrepl/message session {:op "eval" :code %}))]
+      (run (format "(shadow.cljs.devtools.api/nrepl-select %s)" build-id))
+      (select-keys (run code) [:out :err]))))
+
+(defn- timed
+  "[result elapsed-ms] of calling F."
+  [f]
+  (let [start (System/currentTimeMillis)
+        result (f)]
+    [result (- (System/currentTimeMillis) start)]))
+
+(defn- poll
+  "The first truthy value of F within TIMEOUT-MS, or nil."
+  [timeout-ms f]
+  (let [deadline (+ (System/currentTimeMillis) timeout-ms)]
+    (loop []
+      (or (f)
+          (when (< (System/currentTimeMillis) deadline)
+            (Thread/sleep 50)
+            (recur))))))
+
+(defn- await-runtime
+  "The first REPL runtime connected to BUILD-ID within TIMEOUT-MS, or nil."
+  [build-id timeout-ms]
+  (poll timeout-ms #(->> (api/repl-runtimes build-id) (map :client-id) first)))
+
+(defn- when-bun
+  "Calls F, or passes vacuously when bun is not installed."
+  [f]
+  (if-not (bun-available?)
+    (testing "Bun not installed"
+      (is true))
+    (f)))
+
+(defn- with-watched-build
+  "Watch CONFIG, compiled once, call F with it, and stop the worker. CLI-OPTS
+  go to api/watch. Without bun, F does not run and the test passes
+  vacuously."
+  ([config f] (with-watched-build config {} f))
+  ([{:keys [build-id] :as config} cli-opts f]
+   (when-bun
+     (fn []
+       (try
+         ;; a worker left by an aborted run would ignore CLI-OPTS; failing
+         ;; here still stops it, so the next run starts clean
+         (assert (= :watching (api/watch config (merge {:autobuild false :sync true} cli-opts)))
+                 (str build-id " was already being watched"))
+         (f config)
+         (finally
+           (api/stop-worker build-id)))))))
+
+(def ^:private no-runtime-message
+  "No available JS runtime.\nSee https://shadow-cljs.github.io/docs/UsersGuide.html#repl-troubleshooting")
+
+(def ^:private connect-window-ms
+  "Long enough for a process started at the end of the compile to connect: a
+  cold bun start loading a dev build takes about a second."
+  5000)
+
+(def ^:private bun-check "(println (some? js/process.versions.bun))")
+
+(deftest a-watched-build-starts-no-process
+  ;; --js-runtime reaches the build through :config-merge, so the raw build
+  ;; config never carries it; both ways of choosing the runtime are checked
+  (doseq [[label config cli-opts]
+          [["from the build config" (script-config :js-runtime-watch-config) {}]
+           ["from the command line" (dissoc (script-config :js-runtime-watch-cli) :js-runtime)
+            {:config-merge [{:js-runtime :bun}]}]]]
+    (testing label
+      (with-watched-build config cli-opts
+        (fn [{:keys [build-id]}]
+          (is (nil? (await-runtime build-id connect-window-ms))
+              "no runtime connected after the compile"))))))
+
+(deftest an-eval-without-a-runtime-fails-at-once
+  (with-watched-build (script-config :js-runtime-watch-eval)
+    (fn [{:keys [build-id]}]
+      (let [[result ms] (timed #(eval-after-select build-id "(println :unreachable)"))]
+        (is (= {:err no-runtime-message} result))
+        (is (< ms 2000) "answered without waiting for a runtime")))))
+
+(deftest an-eval-during-the-first-compile-gets-no-runtime
+  ;; A tool may select the build and evaluate as soon as the watch's nREPL
+  ;; port is written, while the first compile still runs. Nothing in the
+  ;; fork waits for a runtime on the tool's behalf: it polls
+  ;; api/repl-runtimes itself. Every other test here watches with :sync
+  ;; true, which hides this; deleting the build's cache keeps the compile
+  ;; slow enough to evaluate during it.
+  (let [build-id :js-runtime-watch-first-compile]
+    (doseq [f (reverse (file-seq (io/file (get-in (runtime/get-instance!) [:config :cache-root])
+                                          "builds" (name build-id))))]
+      (io/delete-file f true))
+    (with-watched-build (script-config build-id) {:sync false}
+      (fn [_]
+        (is (nil? (-> (api/get-worker build-id) :state-ref deref :last-build-provides))
+            "the eval below starts before the first compile ends")
+        (is (= {:err no-runtime-message} (eval-after-select build-id "(println :unreachable)")))))))
+
+(deftest a-runtime-started-on-the-output-is-evaluated-in
+  ;; the contract a launcher relies on: run the output, and the REPL
+  ;; evaluates in what connects
+  (with-watched-build (script-config :js-runtime-watch-by-hand)
+    (fn [{:keys [build-id output-to]}]
+      (let [process (-> (ProcessBuilder. ^java.util.List ["bun" output-to])
+                        (.redirectErrorStream true)
+                        (.redirectOutput java.lang.ProcessBuilder$Redirect/DISCARD)
+                        (.start))]
+        (try
+          (is (some? (await-runtime build-id 10000)) "the process's client connected")
+          (is (= {:out "true\n"} (eval-after-select build-id bun-check)))
+          (finally
+            (.destroyForcibly process)
+            (.waitFor process)))))))
+
+(deftest watching-a-running-build-by-its-config-says-so
+  ;; with-watched-build relies on this to catch a worker left by an
+  ;; aborted run
+  (with-watched-build (script-config :js-runtime-watch-rewatch)
+    (fn [config]
+      (is (= :already-watching (api/watch config {:autobuild false}))))))
+
+(deftest node-repl-evaluates-under-the-selected-runtime
+  ;; Options as the CLI's --js-runtime builds them.
+  (when-bun
+    #(let [build-id :js-runtime-watch-node-repl]
+       ;; node-repl* returns once it has compiled; its process starts behind it
+       (repl-impl/node-repl* (runtime/get-instance!)
+         {:build-id build-id :js-runtime :bun :config-merge [{:js-runtime :bun}]})
+       (try
+         (is (some? (await-runtime build-id 10000)) "its own process connects")
+         (is (= ["true"] (:results (api/cljs-eval build-id "(some? js/process.versions.bun)" {})))
+             "and evaluates under bun")
+         (finally
+           (api/stop-worker build-id))))))
+#+end_src
+
+The namespace names no var that does not exist yet, so no stub step is needed: it loads against today's code and every assertion runs.
+
+- [ ] *Step 3: RED in the REPL.* Start the REPL and the server per Global Constraints § The REPL, then =(require 'shadow.cljs.js-runtime-watch-test)= and =(clojure.test/run-tests 'shadow.cljs.js-runtime-watch-test)=. Expected: =Ran 6 tests containing 11 assertions.= =4 failures, 0 errors.= The failures: both cases of =a-watched-build-starts-no-process= (a runtime connected), and the =:err= assertion of =an-eval-without-a-runtime-fails-at-once= and of =an-eval-during-the-first-compile-gets-no-runtime=, each getting ={:out ":unreachable\n"}= from the managed process.
+
+- [ ] *Step 4: RED in the runner.* Stop the REPL's server, then run the suite runner on =shadow.cljs.js-runtime-watch-test= alone, through the log line. Expected: =exit 1=, and the log's tally =Ran 6 tests containing 11 assertions.= =4 failures, 0 errors.=, with the same four failures ([[my:shadow-cljs/docs/explorations/2026/2026-10/2026-10-29-drop-managed-runtime-plan-spike.org::#round-2][verified: round 2]]). A load or compile error in its place is a defect in steps 1–2, not a RED.
+
+- [ ] *Step 5: Remove the managed runtime from =src/main=.*
+  - =git checkout f2fbb3a9ba7be3f91ff386039020a1632646e458 -- src/main/shadow/cljs/devtools/server/worker.clj src/main/shadow/cljs/devtools/server/worker/impl.clj=. This drops the eval wait, the log tail, the process lifecycle and the shutdown hunk that left the relay before stopping the process.
+  - =git rm src/main/shadow/cljs/devtools/server/js_runtime.clj=.
+  - In =shadow.build.targets.shared=, delete =explicit-js-runtime?= and =managed-runtime?=. The first had no other caller; every other helper stays.
+  - In =repl_impl.clj=, restore upstream's text everywhere except =node-repl*='s runtime choice. Its eval path loses =no-runtime-reason= and the =::last-no-runtime-reason= recur, and prints upstream's message again; =node-repl*= passes =(assoc opts ::node-repl true)= to =super/start-worker= again, since nothing filters =:js-runtime= out of a build any longer. The file's whole diff against =f2fbb3a9= is then exactly:
+
+#+begin_src diff
+@@ -8,6 +8,7 @@
+     [shadow.cljs.devtools.server.util :as util]
+     [shadow.cljs.devtools.server.supervisor :as super]
+     [shadow.build.log :as build-log]
++    [shadow.build.targets.shared :as shared]
+     [shadow.jvm-log :as log]
+     [shadow.build.warnings :as warnings]
+     [shadow.cljs.devtools.errors :as errors]
+@@ -387,10 +388,10 @@
+            build-id
+            node-args
+            node-command
+-           pwd]
++           pwd
++           js-runtime]
+     :or {node-args []
+-         build-id :node-repl
+-         node-command "node"}
++         build-id :node-repl}
+     :as opts}]
+   (let [script-name
+         (str (:cache-root config) File/separatorChar "shadow-node-repl.js")
+@@ -424,10 +425,17 @@
+           (let [crash
+                 (async/promise-chan)
+
++                runtime-argv
++                (if node-command
++                  (into [node-command] node-args)
++                  (into (shared/js-runtime-stdin-argv
++                          {:target :node-script
++                           :js-runtime js-runtime})
++                        node-args))
++
+                 node-proc
+                 (-> (ProcessBuilder.
+-                      (into-array
+-                        (into [node-command] node-args)))
++                      (into-array runtime-argv))
+                     (.directory
+                       ;; nil defaults to JVM working dir
+                       (when pwd
+#+end_src
+
+  Check: =git diff --numstat f2fbb3a9 -- src/main/shadow/cljs/devtools/server/repl_impl.clj src/main/shadow/cljs/devtools/server/worker.clj src/main/shadow/cljs/devtools/server/worker/impl.clj= prints only =repl_impl.clj=, with =13= added and =5= removed ([[my:shadow-cljs/docs/explorations/2026/2026-10/2026-10-29-drop-managed-runtime-plan-spike.org::#round-3][verified: round 3]]).
+
+- [ ] *Step 6: GREEN in the REPL.* Stop the server, then =(require '[shadow.build.targets.shared] '[shadow.cljs.devtools.server.worker.impl] '[shadow.cljs.devtools.server.worker] '[shadow.cljs.devtools.server.repl-impl] :reload)=, start the server and re-run the namespace. Expected: =Ran 6 tests containing 11 assertions.= =0 failures, 0 errors.= The deleted =js-runtime= namespace stays loaded in this JVM and is harmless; the runner in step 9 proves the tree without it.
+
+- [ ] *Step 7: Remove the managed runtime's suite.* =git rm= the four files under =src/repl= that the Files block deletes. In =js_runtime_test.clj=, delete =test-managed-runtime-is-opt-in= and =test-bootstrap-source-keeps-runtime-alive=, the =shadow.cljs.devtools.server.js-runtime= require, and =testing= from the =clojure.test= refer, which nothing used.
+
+- [ ] *Step 8: Repoint the text that named the deleted suite.* Exact replacements:
+  - =.github/workflows/ci.yml=: in the run step, =shadow.cljs.managed-runtime-test= becomes =shadow.cljs.js-runtime-watch-test=. The comment above the job opens =# src/repl holds the fork's server-backed suites, which need a running=, and the one above =timeout-minutes= reads =# autorun-test and the runtimes the suites start wait on child processes= / =# with no limit of their own=.
+  - =server_test_runner.clj=, its docstring: =shadow.cljs.managed-runtime-test needs a server= becomes =shadow.cljs.js-runtime-watch-test needs a server=.
+  - =websocket_test.clj=, =capturing-send-failures='s docstring ends after =returns [F's result, the records].=: the sentence calling it a copy of the managed-runtime tests' capture goes, since that original is deleted.
+  - =docs/clojars-publishing.org=, § Syncing to a new upstream version: the two sentences from =The managed runtime widened that surface= to =which the managed runtime checks.= become this one:
+
+    #+begin_example
+    Read upstream's changes to every file the fork edits even when they auto-merge; =git diff --stat $(git merge-base master upstream/master) master -- src/main= lists them.
+    #+end_example
+
+    In step 5 of the same section, =managed-runtime suites= becomes =server-backed suites=, =upstream's worker changes= becomes =upstream's REPL and worker changes=, and the command's =shadow.cljs.managed-runtime-test= becomes =shadow.cljs.js-runtime-watch-test=.
+
+- [ ] *Step 9: GREEN in the runner.* With the REPL's server stopped, run the suite runner on CI's list, through the log line. Expected: =exit 0=, =Ran 18 tests containing 33 assertions.= =0 failures, 0 errors.=, and a pristine log per Global Constraints ([[my:shadow-cljs/docs/explorations/2026/2026-10/2026-10-29-drop-managed-runtime-plan-spike.org::#round-3][verified: round 3]]).
+
+- [ ] *Step 10: =lein test= stays green.* Through the log line. Expected: =exit 0=, =Ran 69 tests containing 209 assertions.= =0 failures, 0 errors.= ([[my:shadow-cljs/docs/explorations/2026/2026-10/2026-10-29-drop-managed-runtime-plan-spike.org::#round-3][verified: round 3]])
+
+- [ ] *Step 11: Nothing names the managed runtime's code.* =git grep -n -e managed-runtime -e await-managed -e managed-build -e server.js-runtime -- src .github docs/clojars-publishing.org= prints nothing and exits 1 ([[my:shadow-cljs/docs/explorations/2026/2026-10/2026-10-29-drop-managed-runtime-plan-spike.org::#round-3][verified: round 3]]).
+
+- [ ] *Step 12: Lint* per Global Constraints. Expected ([[my:shadow-cljs/docs/explorations/2026/2026-10/2026-10-29-drop-managed-runtime-plan-spike.org::#round-3][verified: round 3]]): the fork-created files exit 0; =repl_impl.clj= and =shared.clj= carry no finding on a changed line. =worker.clj= and =worker/impl.clj= now hold upstream's text and have no fork lines to check.
+
+- [ ] *Step 13: Commit.*
+
+#+begin_src shell
+git add -- src/repl/shadow/cljs/js_runtime_watch_test.clj src/repl/shadow/cljs/js_runtime_watch_probe.cljs \
+  src/main/shadow/cljs/devtools/server/worker.clj src/main/shadow/cljs/devtools/server/worker/impl.clj \
+  src/main/shadow/cljs/devtools/server/repl_impl.clj src/main/shadow/build/targets/shared.clj \
+  src/main/shadow/cljs/devtools/server/js_runtime.clj \
+  src/repl/shadow/cljs/managed_runtime_test.clj src/repl/shadow/cljs/managed_runtime_probe.cljs \
+  src/repl/shadow/cljs/managed_runtime_busy_probe.cljs src/repl/shadow/cljs/managed_runtime_exit_probe.cljs \
+  src/repl/shadow/cljs/js_runtime_test.clj src/repl/shadow/cljs/server_test_runner.clj \
+  src/test/shadow/cljs/devtools/server/web/websocket_test.clj .github/workflows/ci.yml docs/clojars-publishing.org
+git commit -m "feat!: a watched build starts no process; the fork drops the managed runtime"
+#+end_src
+
+* Task 2: The docs describe the selector alone
+:PROPERTIES:
+:CUSTOM_ID: task-2
+:END:
+
+*Dialect:* =clj=. Documentation and one docstring in a JVM namespace; the RED/GREEN cycle is the grep in step 1 and step 6.
+
+*Files:*
+- Modify: =doc/js-runtime.md=
+- Modify: =doc/js-runtime-architecture.md=
+- Modify: =README.md=
+- Modify: =src/main/shadow/cljs/devtools/server/web/websocket.clj=
+- Modify: =todo.org=
+
+*Interfaces:*
+- Consumes: Task 1's list of removed names, which no doc may mention.
+- Produces: nothing code uses.
+
+*State:*
+
+| What                                  | Before (after Task 1)                    | After          |
+|---------------------------------------+------------------------------------------+----------------|
+| Lines the step 1 grep prints           | 34: 26 in the architecture doc, 6 in =js-runtime.md=, 1 each in the README and =websocket.clj= ([[my:shadow-cljs/docs/explorations/2026/2026-10/2026-10-29-drop-managed-runtime-plan-spike.org::#round-4][verified: round 4]]) | none           |
+
+- [ ] *Step 1: RED, the work list.* =git grep -n -i managed -- doc README.md src/main/shadow/cljs/devtools/server src/main/shadow/build src/repl src/test .github docs/clojars-publishing.org ':!src/test/shadow/build/npm_test.clj'=. The excluded file's one match is upstream's =:managed-by= option, unrelated to the runtime. Expected: every line it prints sits in =doc/js-runtime.md=, =doc/js-runtime-architecture.md=, =README.md= or =websocket.clj=, as the State table counts.
+
+- [ ] *Step 2: =doc/js-runtime.md=.* Replace § Watched builds and REPL. The new section says:
+  - A watched build compiles, and the fork starts no process for it, as upstream starts none. Whatever runs the output owns its process: =bun out/script.js= by hand, or a project launcher such as =bb dev=.
+  - Start it only after the watch has printed =[:<build>] Build completed.=: output left by an earlier watch connects, is rejected as =Stale Output!=, and stops retrying.
+  - The REPL evaluates in whatever connects. An eval with no connected runtime fails at once with "No available JS runtime"; a tool that evaluates right after starting the watch polls =(shadow.cljs.devtools.api/repl-runtimes <build>)= until it is non-empty.
+  - On a =:node-script= build the fork itself reads =:js-runtime= nowhere; the key records which program runs the output, for tools that start it.
+
+  In § CLI usage, say what the flag changes per command: =node-repl='s process, and =:node-test= autorun under =watch=, =compile= and =release=; on a =:node-script= it changes nothing in the fork. Delete the closing "managed process is stopped automatically" line.
+
+- [ ] *Step 3: =doc/js-runtime-architecture.md=.*
+  - Delete the =managed-runtime?= table row, § Bootstrap, § Managed Runtime Lifecycle and § The REPL side.
+  - Data Flow: the middle column ends at the compile; nothing in the fork starts a process for it.
+  - Runtime Connection: a process running the output stays alive through the client's own 1 s idle interval (=shadow.cljs.devtools.client.shared/start-idle= sets it; =stop-runtime!= alone clears it), so a client that gave up retrying leaves the process up and disconnected.
+  - Process Ownership: the watched-build row's owner is whatever started the output.
+  - Scope, Future Considerations and Extension Points lose every mention of the bootstrap and of =start-managed-runtime=.
+  - Add a short section, "Rejected: a managed runtime", in the doc's own "built and removed" style: earlier fork releases started and stopped a process per watched build in the worker; it cost most of the fork's diff against upstream and the conflict surface of every sync, so starting the output moved out of the JVM. Cite the design by its path, =docs/specs/2026/2026-10/2026-10-28-drop-managed-runtime-design.org=, since Markdown cannot follow an org id.
+
+- [ ] *Step 4: =README.md= and =websocket.clj=.* Exact replacements:
+  - README, the AI-assistance note: =(the `:js-runtime` option, the worker-managed Bun runtime, and their tests, CI and docs)= becomes =(the `:js-runtime` option and its tests, CI and docs)=.
+  - =shadow.cljs.devtools.server.web.websocket='s ns docstring: from =The managed runtime makes that routine,= to the paragraph's end, its last four lines become:
+
+#+begin_src clojure
+  uncaught on its virtual thread. A runtime that crashes, or that whatever
+  started it restarts or stops, is such a peer. It also closes the
+  websocket whenever the write loop ends, where upstream leaves a client
+  the relay dropped connected but deaf.
+#+end_src
+
+- [ ] *Step 5: =todo.org=.* Close [[id:20261018T195432.672778][the managed runtime's two known limitations]]: =TODO= becomes =DONE=, a =CLOSED:= stamp minted by ~LC_ALL=C date '+[%Y-%m-%d %a %H:%M]'~ goes on the line under the heading, and the body gains one line: the managed runtime they describe is gone, per [[id:20261028T164829.836099][the drop-managed-runtime design]]. Run =bd org emphasis-check todo.org= afterwards; expected exit 0.
+
+- [ ] *Step 6: GREEN.* The step 1 grep prints nothing and exits 1. =lein test= through the log line: =exit 0=, =Ran 69 tests containing 209 assertions.= =0 failures, 0 errors.= =clj-kondo --lint src/main/shadow/cljs/devtools/server/web/websocket.clj= exits 0.
+
+- [ ] *Step 7: Commit.*
+
+#+begin_src shell
+git add -- doc/js-runtime.md doc/js-runtime-architecture.md README.md \
+  src/main/shadow/cljs/devtools/server/web/websocket.clj todo.org
+git commit -m "docs: the js-runtime docs describe the selector without the managed runtime"
+#+end_src
+
+* Self-Review
+:PROPERTIES:
+:CUSTOM_ID: self-review
+:END:
+
+Run before the handoff, each check mechanical:
+
+- *Spec coverage.* =drop-managed-runtime=: Task 1 (code, suite, CI, publishing doc), Task 2 (docs, the limitations' closure). =keep-selector=: Task 1 keeps every selector helper but the two predicates only the managed runtime called, with =js_runtime_test=, =bun_runtime_test= and the =node-repl= test green. =keep-guarded-handler= and =keep-printer-fix=: untouched, but for the handler's docstring in Task 2. "Left to the builder": the =js_runtime_test= sort and the server runner's docstring (Task 1), the two docs (Task 2). The launcher, consumers and agent-skills belong to later plans.
+- *Files against =git add=.* Each Commit step's =git add= lists exactly its task's Files paths, deletions included.
+- *Log line.* Every run step cites Global Constraints § The log line, which assigns =LOG=.
+- *Counts.* The RED and GREEN tallies, the =lein test= tally, the =repl_impl.clj= numstat and the Task 2 grep count come from the plan spike's rounds, not from arithmetic.
