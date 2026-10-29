@@ -381,7 +381,7 @@ When a shadow server is already running in the project, such as the one kiln's =
 
 An attached CLI stops its build when its stdin reaches end-of-file, which the launcher's open pipe never does ([[#reads-watch-output]]).
 
-So =bb dev= and continuous testing run side by side, in either start order. tmk ruled on [2026-10-28 Wed] that refusing a running server would block that pairing ([[#rejected-refuse-server]]). A =:dev= already watched elsewhere needs no detection of its own: the watch exits 1, and the launcher reports it and exits ([[#stop-together]]).
+So =bb dev= and continuous testing run side by side, in either start order. Stopping them is where the order shows: whichever command started the server owns it, and stopping that command stops the server with every watch attached to it. When =bb dev= started first, stopping it stops continuous testing too ([[my:shadow-cljs/docs/explorations/2026/2026-10/2026-10-29-bb-dev-lifecycle-spike.org::#round-4][verified: lifecycle round 4]]); when continuous testing started first, stopping =bb dev= leaves it running (round 3 above). Upstream shadow behaves the same today, and a launcher that never owned the server would need a separate server process, a mode nobody has needed. tmk ruled on [2026-10-28 Wed] that refusing a running server would block that pairing ([[#rejected-refuse-server]]). A =:dev= already watched elsewhere needs no detection of its own: the watch exits 1, and the launcher reports it and exits ([[#stop-together]]).
 
 ** The build's :js-runtime chooses the program
 :PROPERTIES:
@@ -529,7 +529,7 @@ Why it is needed, shown with a stand-in launcher in bb that starts the watch, wa
 :BARE-REASON: Behaviour to build; the launcher's own test suite is its evidence.
 :END:
 
-Bound: when the launcher exits on SIGINT or SIGTERM, or because its watch exited, it stops Bun and its watch before it exits: SIGTERM, then a forced kill after 2 s. A watch that exits on its own makes the launcher exit non-zero, reporting the watch's exit code. Stopping its watch stops only the build it watches: a server it attached to keeps running, with that server's other builds ([[#attached-watch]]).
+Bound: when the launcher exits on SIGINT or SIGTERM, or because its watch exited, it stops Bun and its watch before it exits: SIGTERM, then a forced kill after 2 s. A watch that exits on its own makes the launcher exit non-zero, reporting the watch's exit code. Stopping its watch stops only the build it watches when the watch attached to a server another command started: that server keeps running, with its other builds. When the launcher's watch started the server, stopping it stops the server and every watch attached to it ([[#attached-watch]]).
 
 A SIGKILL to the launcher alone is covered by the guards instead ([[#guard-children]]): Bun and the watch get SIGTERM within about 1 s, and SIGKILL 2 s after that.
 
