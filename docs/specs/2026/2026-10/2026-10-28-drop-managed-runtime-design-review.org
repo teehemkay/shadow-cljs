@@ -19,6 +19,7 @@
 | Round 2                                                                         |             |         |          |
 | Finding 1 — [P2] Establish launcher identity before the guard starts            | fixed       | new     | [[orgit-rev:~/dev/my/shadow-cljs::11ea859586faac9f079a10a70730aba9bff41182][11ea8595]] |
 | Finding 2 — [P2] Demonstrate the modification-time rejection                    | fixed       | new     | [[orgit-rev:~/dev/my/shadow-cljs::c5fee4c7f4d415beb3b173b85375071a8fa89c58][c5fee4c7]] |
+| Round 3                                                                         |             |         |          |
 #+END:
 
 * Round 1
@@ -259,5 +260,27 @@ Add a deterministic partial-write counterexample and cite it from this row. Esta
 - Question: narrow the row to the preference, as in (a)?
 
 *Action.* Fixed as (a), routed by tmk with finding 1. The mid-write and failed-compile clauses are gone; the row now says a modification time says only that the file changed, while the compile line the launcher already reads says whether the build passed, citing [[my:shadow-cljs/docs/specs/2026/2026-10/2026-10-28-drop-managed-runtime-design.org::#reads-watch-output]]. The bare reason reads as the design preference it is. Recommendation verification: the reviewer's partial-write probe would show a generic writer, not shadow's, so it was not added. Residue sweep: =grep -n 'still being written\|missing signal'= over the spec finds nothing. Audit green.
+
+* Round 3
+:PROPERTIES:
+:CUSTOM_ID: r3
+:DISPATCHED: [2026-10-29 Thu 21:26]
+:REVIEWED_AT: 233378dfa7b54b6e1f17fe3b5a88e1cc21e949a9
+:AUDIT: green
+:PROMPT: [[my:shadow-cljs/docs/specs/2026/2026-10/2026-10-28-drop-managed-runtime-design-review-rounds/2026-10-28-drop-managed-runtime-design-review-round-03-prompt.md]]
+:RESULT: [[my:shadow-cljs/docs/specs/2026/2026-10/2026-10-28-drop-managed-runtime-design-review-rounds/2026-10-28-drop-managed-runtime-design-review-round-03-result.json]]
+:REVIEWER: codex
+:REVIEWER_VERSION: codex-cli 0.165.0
+:REVIEWER_MODEL: gpt-6-astra
+:REVIEWER_EFFORT: medium
+:REVIEWER_ISOLATED: yes
+:VERDICT: approve
+:FINDINGS: 0
+:END:
+Reviewed [[orgit-blob:~/dev/my/shadow-cljs::233378dfa7b54b6e1f17fe3b5a88e1cc21e949a9/docs/specs/2026/2026-10/2026-10-28-drop-managed-runtime-design.org][the artefact at 233378df]].
+
+#+begin_example
+tmk, looks good. No material findings in the updated spec’s commitments, evidence links, executable blocks, or bare decisions. The recent fixes introduce no apparent contradictions. Review was static; no evidence blocks executed or files written.
+#+end_example
 
 
