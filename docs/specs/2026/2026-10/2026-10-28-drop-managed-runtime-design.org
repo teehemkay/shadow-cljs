@@ -648,10 +648,10 @@ A =:build-hooks= function at the =:flush= stage could write a marker file the la
 :CUSTOM_ID: rejected-mtime
 :KIND: rejection
 :EVIDENCE: bare
-:BARE-REASON: The defect is a missing signal, which no block can show present.
+:BARE-REASON: A design preference for the richer signal the launcher already has.
 :END:
 
-Polling =out/dev.js='s modification time needs no parsing, but it cannot tell a failed compile from a good one, and it can fire while the file is still being written.
+Polling =out/dev.js='s modification time needs no parsing, but a modification time says only that the file changed. The compile line the launcher already reads says whether the build passed ([[#reads-watch-output]]), so the poll would add a second signal that carries less.
 
 ** Rejected: the launcher as a bd subcommand
 :PROPERTIES:
