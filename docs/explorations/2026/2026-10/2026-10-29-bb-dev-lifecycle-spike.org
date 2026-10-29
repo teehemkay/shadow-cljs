@@ -102,15 +102,17 @@ wait_for() {
 # :dev watch, reads its stdout and stderr, and starts bun out/dev.js once
 # the first "[:dev] Build completed." line arrives. With GUARD=1 in its
 # environment it starts both children through guard.cjs, which follows
-# the design's guard rules: the command in a process group of its own,
-# the parent checked once a second, and on the parent's loss, a signal,
+# the design's guard rules: the launcher's pid passed as the first
+# argument, the parent checked against it before the command starts and
+# once a second after, the command in a process group of its own, and on
+# the parent's loss, a signal,
 # or the command's own exit, SIGTERM to the group, then SIGKILL once the
 # group is empty or 2 s have passed.
 write_launcher() {
   printf '%s\n' \
     '(require (quote [babashka.process :as p]) (quote [clojure.java.io :as io]))' \
     '(def guard? (= "1" (System/getenv "GUARD")))' \
-    '(defn cmd [& args] (if guard? (into ["bun" "guard.cjs"] args) (vec args)))' \
+    '(defn cmd [& args] (if guard? (into ["bun" "guard.cjs" (str (.pid (java.lang.ProcessHandle/current)))] args) (vec args)))' \
     '(let [watch (p/process (cmd "bun" "run" "--bun" "shadow-cljs" "watch" "dev") {:err :out})' \
     '      rdr (io/reader (:out watch))]' \
     '  (loop []' \
@@ -124,8 +126,9 @@ write_launcher() {
     '        (recur)))))' > "$1/launcher.clj"
   printf '%s\n' \
     'const { spawn } = require("child_process");' \
-    'const parent = process.ppid;' \
-    'const child = spawn(process.argv[2], process.argv.slice(3), { stdio: "inherit", detached: true });' \
+    'const parent = Number(process.argv[2]);' \
+    'if (process.ppid !== parent) process.exit(1);' \
+    'const child = spawn(process.argv[3], process.argv.slice(4), { stdio: "inherit", detached: true });' \
     'let code = 1, stopping = false;' \
     'const alive = () => { try { process.kill(-child.pid, 0); return true; } catch (e) { return false; } };' \
     'const stop = () => {' \
