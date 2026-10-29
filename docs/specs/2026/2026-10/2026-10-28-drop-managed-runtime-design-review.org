@@ -17,7 +17,7 @@
 | Finding 4 — [P2] Preserve executable evidence for the observed lifecycle claims | fixed       | new     | [[orgit-rev:~/dev/my/shadow-cljs::73ceb1289c9f70167e49c6b5107bcabed3021685][73ceb128]] |
 | Finding 5 — [P2] Make evidence pipelines fail when their source lookup fails    | fixed       | new     | [[orgit-rev:~/dev/my/shadow-cljs::47dba77d480f4439c66c79b332731c2f7af1006a][47dba77d]] |
 | Round 2                                                                         |             |         |          |
-| Finding 1 — [P2] Establish launcher identity before the guard starts            |             |         |          |
+| Finding 1 — [P2] Establish launcher identity before the guard starts            | fixed       | new     | [[orgit-rev:~/dev/my/shadow-cljs::11ea859586faac9f079a10a70730aba9bff41182][11ea8595]] |
 | Finding 2 — [P2] Demonstrate the modification-time rejection                    |             |         |          |
 #+END:
 
@@ -211,6 +211,9 @@ tmk, two gaps remain: a guard startup race and an executable rejection marked ba
 :RAW_FILE: docs/specs/2026/2026-10/2026-10-28-drop-managed-runtime-design.org
 :RAW_LINES: 509-514
 :LOCATION: [[orgit-blob:~/dev/my/shadow-cljs::3db6b0eb3225b2a451a042ce5157988b0aac08ca/docs/specs/2026/2026-10/2026-10-28-drop-managed-runtime-design.org#509-514]]
+:SURFACE: new
+:DISPOSITION: fixed
+:COMMIT: [[orgit-rev:~/dev/my/shadow-cljs::11ea859586faac9f079a10a70730aba9bff41182][11ea8595]]
 :END:
 #+begin_example
 Checking whether the parent changes misses a launcher killed before the guard first records its parent. The guard can observe its adopted parent from its first instruction onward, start the command, and never detect a change. That leaves children running despite the launcher-only SIGKILL guarantee at lines 534–536. The descendant-cleanup revision does not cover this startup window.
@@ -226,6 +229,8 @@ Specify that the guard receives the expected launcher identity and checks it bef
 - Position: material but narrow, and new: the parent check predates round 1's fix. The window is the guard's own startup, tens of milliseconds, and the launcher only dies in it to a SIGKILL. The approach holds; the reference point is wrong.
 - Options: (a, lean) the launcher passes its own pid to the guard as an argument; the guard checks that its parent is that pid before starting the command and on every tick, and stops otherwise. A test hands the guard a pid that is already gone and expects it to start nothing. (b) Treat a parent of pid 1 as a dead launcher. Shorter, but it assumes orphans are adopted by pid 1, which a subreaper breaks.
 - Question: pass the launcher's pid to the guard, as in (a)?
+
+*Action.* Fixed as (a), routed by tmk with finding 2. The guard is now run as =bun <guard> <launcher-pid> <command…>= and checks that its parent is that pid before starting the command and once a second after; before the start, any other parent makes it exit non-zero without starting anything. A paragraph after the rules gives the startup window as the reason, names the launcher test (a guard handed the pid of an exited process starts nothing), and records the pid-1 alternative as rejected because a subreaper breaks it. The [[id:20261029T182039.858528][lifecycle spike]]'s =guard.cjs= now follows the same rule, with its stand-in launcher passing =(.pid (java.lang.ProcessHandle/current))=, so the guard row's "following the rules above" stays true; =bd org spike-verify --write= re-ran every round clean with unchanged results. The startup race itself is left to the launcher's tests, as the reviewer recommended: a SIGKILL timed inside the guard's startup is not deterministic in a spike. Residue sweep: =grep -n 'parent process has changed\|<guard> <command'= over the spec and the spike finds nothing. Audit green.
 
 ** Finding 2 — [P2] Demonstrate the modification-time rejection
 :PROPERTIES:
