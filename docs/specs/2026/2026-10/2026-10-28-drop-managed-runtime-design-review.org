@@ -20,6 +20,8 @@
 | Finding 1 — [P2] Establish launcher identity before the guard starts            | fixed       | new     | [[orgit-rev:~/dev/my/shadow-cljs::11ea859586faac9f079a10a70730aba9bff41182][11ea8595]] |
 | Finding 2 — [P2] Demonstrate the modification-time rejection                    | fixed       | new     | [[orgit-rev:~/dev/my/shadow-cljs::c5fee4c7f4d415beb3b173b85375071a8fa89c58][c5fee4c7]] |
 | Round 3                                                                         |             |         |          |
+| Converged — [2026-10-29 Thu]                                                    |             |         |          |
+| Resolution                                                                      |             |         |          |
 #+END:
 
 * Round 1
@@ -282,5 +284,100 @@ Reviewed [[orgit-blob:~/dev/my/shadow-cljs::233378dfa7b54b6e1f17fe3b5a88e1cc21e9
 #+begin_example
 tmk, looks good. No material findings in the updated spec’s commitments, evidence links, executable blocks, or bare decisions. The recent fixes introduce no apparent contradictions. Review was static; no evidence blocks executed or files written.
 #+end_example
+
+* Converged — [2026-10-29 Thu]
+:PROPERTIES:
+:VERDICT: approve
+:AUDIT: green
+:RESOLVED: 81
+:UNRESOLVED: 1
+:TRAJECTORY: 5/2/0
+:LAST_MATERIAL_ROUND: 2
+:END:
+Round 3 came back empty: the reviewer approved the spec at 233378df with no findings, after rounds of 5 and 2 findings, all fixed. The pre-close audit is green.
+
+** Resolution
+- [[my:shadow-cljs/docs/specs/2026/2026-10/2026-10-28-drop-managed-runtime-design.org::#atomic-switch]] :: resolved
+- [[my:shadow-cljs/docs/specs/2026/2026-10/2026-10-28-drop-managed-runtime-design.org::#attached-watch]] :: resolved
+- [[my:shadow-cljs/docs/specs/2026/2026-10/2026-10-28-drop-managed-runtime-design.org::#callers-wait]] :: resolved
+- [[my:shadow-cljs/docs/specs/2026/2026-10/2026-10-28-drop-managed-runtime-design.org::#docs-rewritten]] :: resolved
+- [[my:shadow-cljs/docs/specs/2026/2026-10/2026-10-28-drop-managed-runtime-design.org::#drop-managed-runtime]] :: resolved
+- [[my:shadow-cljs/docs/specs/2026/2026-10/2026-10-28-drop-managed-runtime-design.org::#fork-today]] :: resolved
+- [[my:shadow-cljs/docs/specs/2026/2026-10/2026-10-28-drop-managed-runtime-design.org::#guard-children]] :: resolved
+- [[my:shadow-cljs/docs/specs/2026/2026-10/2026-10-28-drop-managed-runtime-design.org::#interleaved-output]] :: resolved
+- [[my:shadow-cljs/docs/specs/2026/2026-10/2026-10-28-drop-managed-runtime-design.org::#keep-guarded-handler]] :: resolved
+- [[my:shadow-cljs/docs/specs/2026/2026-10/2026-10-28-drop-managed-runtime-design.org::#keep-printer-fix]] :: resolved
+- [[my:shadow-cljs/docs/specs/2026/2026-10/2026-10-28-drop-managed-runtime-design.org::#launcher-ground]] :: resolved
+- [[my:shadow-cljs/docs/specs/2026/2026-10/2026-10-28-drop-managed-runtime-design.org::#reads-watch-output]] :: resolved
+- [[my:shadow-cljs/docs/specs/2026/2026-10/2026-10-28-drop-managed-runtime-design.org::#rejected-bd-subcommand]] :: resolved
+- [[my:shadow-cljs/docs/specs/2026/2026-10/2026-10-28-drop-managed-runtime-design.org::#rejected-build-hook]] :: resolved
+- [[my:shadow-cljs/docs/specs/2026/2026-10/2026-10-28-drop-managed-runtime-design.org::#rejected-copies]] :: resolved
+- [[my:shadow-cljs/docs/specs/2026/2026-10/2026-10-28-drop-managed-runtime-design.org::#rejected-fork-wait]] :: resolved
+- [[my:shadow-cljs/docs/specs/2026/2026-10/2026-10-28-drop-managed-runtime-design.org::#rejected-mtime]] :: resolved
+- [[my:shadow-cljs/docs/specs/2026/2026-10/2026-10-28-drop-managed-runtime-design.org::#rejected-readiness-check]] :: resolved
+- [[my:shadow-cljs/docs/specs/2026/2026-10/2026-10-28-drop-managed-runtime-design.org::#rejected-ready-line]] :: resolved
+- [[my:shadow-cljs/docs/specs/2026/2026-10/2026-10-28-drop-managed-runtime-design.org::#rejected-refuse-server]] :: resolved
+- [[my:shadow-cljs/docs/specs/2026/2026-10/2026-10-28-drop-managed-runtime-design.org::#release-order]] :: resolved
+- [[my:shadow-cljs/docs/specs/2026/2026-10/2026-10-28-drop-managed-runtime-design.org::#restart-policy]] :: resolved
+- [[my:shadow-cljs/docs/specs/2026/2026-10/2026-10-28-drop-managed-runtime-design.org::#run-output-directly]] :: resolved
+- [[my:shadow-cljs/docs/specs/2026/2026-10/2026-10-28-drop-managed-runtime-design.org::#start-after-compile]] :: resolved
+- [[my:shadow-cljs/docs/specs/2026/2026-10/2026-10-28-drop-managed-runtime-design.org::#stop-together]] :: resolved
+- [[id:20261018T195432.672778]] :: resolved
+- [[id:20261019T105108.243880]] :: resolved
+- [[id:20261021T185802.026641]] :: resolved
+- [[id:20261024T174047.298693]] :: resolved
+- [[my:shadow-cljs/doc/js-runtime-architecture.md]] :: resolved
+- [[my:shadow-cljs/doc/js-runtime.md]] :: resolved
+- [[my:shadow-cljs/docs/clojars-publishing.org]] :: resolved
+- [[my:shadow-cljs/docs/explorations/2026/2026-10/2026-10-29-bb-dev-lifecycle-spike.org::#round-1]] :: resolved
+- [[my:shadow-cljs/docs/explorations/2026/2026-10/2026-10-29-bb-dev-lifecycle-spike.org::#round-2]] :: resolved
+- [[my:shadow-cljs/docs/explorations/2026/2026-10/2026-10-29-bb-dev-lifecycle-spike.org::#round-3]] :: resolved
+- [[my:shadow-cljs/docs/explorations/2026/2026-10/2026-10-29-bb-dev-lifecycle-spike.org::#round-4]] :: resolved
+- ~shadow.cljs.devtools.server.util~ :: resolved
+- ~watch-builds~ :: resolved
+- ~start!~ :: resolved
+- ~start-system~ :: resolved
+- ~shared/js-runtime-stdin-argv~ :: resolved
+- ~shared/js-runtime-file-argv~ :: resolved
+- ~shadow.cljs.managed-runtime-test~ :: resolved
+- ~shadow.cljs.devtools.server.web.websocket~ :: resolved
+- ~shadow.cljs.devtools.api/watch~ :: resolved
+- ~managed-runtime?~ :: resolved
+- ~build/flush~ :: resolved
+- ~shadow.cljs.devtools.api/repl-runtimes~ :: resolved
+- ~:build-log~ :: resolved
+- ~:build-complete~ :: resolved
+- ~repl-tests~ :: resolved
+- ~build.clj~ :: resolved
+- ~build/config.clj~ :: resolved
+- ~build/node.clj~ :: resolved
+- ~targets/node_script.clj~ :: resolved
+- ~targets/node_test.clj~ :: resolved
+- ~targets/shared.clj~ :: resolved
+- ~cli_actual.clj~ :: resolved
+- ~cli_opts.cljc~ :: resolved
+- ~repl_impl.clj~ :: resolved
+- ~devtools/api.clj~ :: resolved
+- ~repl-help.txt~ :: resolved
+- ~server/worker/impl.clj~ :: resolved
+- ~server/worker.clj~ :: resolved
+- ~server/web/websocket.clj~ :: resolved
+- ~server/web/api.clj~ :: resolved
+- ~server/util.clj~ :: resolved
+- ~server/js_runtime.clj~ :: resolved
+- ~src/repl/shadow/cljs/managed_runtime_test.clj~ :: resolved
+- ~src/repl/shadow/cljs/js_runtime_test.clj~ :: resolved
+- ~server_test_runner.clj~ :: resolved
+- ~managed_runtime_probe.cljs~ :: resolved
+- ~managed_runtime_exit_probe.cljs~ :: resolved
+- ~managed_runtime_busy_probe.cljs~ :: resolved
+- ~project.clj~ :: resolved
+- ~deps.edn~ :: resolved
+- ~CHANGELOG.md~ :: resolved
+- ~.github/workflows/ci.yml~ :: resolved
+- ~ik's AGENTS.md~ :: resolved
+- ~cljs-repl-mechanics.md~ :: resolved
+- ~cljs-repl-development~ :: resolved
+- kiln's development guide and architecture reference :: unresolved
 
 
