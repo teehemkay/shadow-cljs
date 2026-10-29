@@ -31,10 +31,16 @@ Next: decide which pom path the two =find-version= functions look up, and change
 - The same value reaches =/api/project-info= through =server.util/project-info=.
 - The two functions are copies: =cli-info= keeps its own to stay lean and fast to start, as its comment says.
 
-* IDEA Drop the managed runtime and keep only the =:js-runtime= selector
+* ONIT Drop the managed runtime and keep only the =:js-runtime= selector
 :PROPERTIES:
 :CREATED:  [2026-10-24 Sat 17:40]
 :ID:       20261024T174047.298693
+:END:
+:LOGBOOK:
+- Note taken on [2026-10-29 Thu 22:45] \\
+  Next: =/apr= on [[id:20261029T220537.596609][the fork's plan]], after tmk confirms the test deletions it makes.
+  - Decided by [[id:20261028T164829.836099][the drop-managed-runtime design]], converged today: the fork drops the managed runtime, and a bb launcher in bunbushka starts Bun.
+  - One plan per release step. The fork's is written and spiked clean; bunbushka's and the consumers' are not started.
 :END:
 
 Decide at the next upstream sync, when the managed runtime's cost shows up again. Surveyed on [2026-10-24 Sat], after [[id:20261021T185802.026641][the first-compile runtime bug]].
