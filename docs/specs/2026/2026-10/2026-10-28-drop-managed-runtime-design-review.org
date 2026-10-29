@@ -1,0 +1,157 @@
+:PROPERTIES:
+:ID:       20261029T181052.976186
+:CREATED:  [2026-10-29 Thu 18:10]
+:END:
+#+TITLE: Review — The fork keeps the js-runtime selector and bb dev starts Bun
+#+ARTEFACT: my:shadow-cljs/docs/specs/2026/2026-10/2026-10-28-drop-managed-runtime-design.org
+#+ARTEFACT_ID: 20261028T164829.836099
+
+#+BEGIN: columnview :id global :maxlevel 2 :format "%40ITEM %DISPOSITION %SURFACE %COMMIT"
+| <40>                                                                            |             |         |        |
+| ITEM                                                                            | DISPOSITION | SURFACE | COMMIT |
+|---------------------------------------------------------------------------------+-------------+---------+--------|
+| Round 1                                                                         |             |         |        |
+| Finding 1 — [P1] Keep guards alive until descendant cleanup finishes            |             |         |        |
+| Finding 2 — [P2] Define shutdown when bb dev owns the shared server             |             |         |        |
+| Finding 3 — [P2] Establish the ordering behind the compile-line guarantee       |             |         |        |
+| Finding 4 — [P2] Preserve executable evidence for the observed lifecycle claims |             |         |        |
+| Finding 5 — [P2] Make evidence pipelines fail when their source lookup fails    |             |         |        |
+#+END:
+
+* Round 1
+:PROPERTIES:
+:CUSTOM_ID: r1
+:DISPATCHED: [2026-10-29 Thu 18:09]
+:REVIEWED_AT: aa24ed3b08688f34a9176e6edcc8066ab32fbede
+:AUDIT: green
+:PROMPT: [[my:shadow-cljs/docs/specs/2026/2026-10/2026-10-28-drop-managed-runtime-design-review-rounds/2026-10-28-drop-managed-runtime-design-review-round-01-prompt.md]]
+:RESULT: [[my:shadow-cljs/docs/specs/2026/2026-10/2026-10-28-drop-managed-runtime-design-review-rounds/2026-10-28-drop-managed-runtime-design-review-round-01-result.json]]
+:REVIEWER: codex
+:REVIEWER_VERSION: codex-cli 0.165.0
+:REVIEWER_MODEL: gpt-6-astra
+:REVIEWER_EFFORT: medium
+:REVIEWER_ISOLATED: yes
+:VERDICT: needs-attention
+:FINDINGS: 5
+:END:
+Reviewed [[orgit-blob:~/dev/my/shadow-cljs::aa24ed3b08688f34a9176e6edcc8066ab32fbede/docs/specs/2026/2026-10/2026-10-28-drop-managed-runtime-design.org][the artefact at aa24ed3b]].
+
+#+begin_example
+tmk, the launcher design has two shutdown ambiguities and three material evidence gaps. Review confined to the target file; no files written or evidence blocks executed.
+#+end_example
+
+** Finding 1 — [P1] Keep guards alive until descendant cleanup finishes
+:PROPERTIES:
+:CUSTOM_ID: r1-f1
+:CONFIDENCE: 0.98
+:RAW_FILE: docs/specs/2026/2026-10/2026-10-28-drop-managed-runtime-design.org
+:RAW_LINES: 414-418
+:LOCATION: [[orgit-blob:~/dev/my/shadow-cljs::aa24ed3b08688f34a9176e6edcc8066ab32fbede/docs/specs/2026/2026-10/2026-10-28-drop-managed-runtime-design.org#414-418]]
+:END:
+#+begin_example
+The guard must send SIGKILL after two seconds, but must also exit when its immediate command exits. If that command exits on SIGTERM while a descendant ignores it, immediate guard exit prevents escalation and leaves the descendant running. Ordinary command exit with surviving descendants is also undefined. This undermines the whole-process-group shutdown guarantee.
+#+end_example
+
+#+begin_example
+Define cleanup precedence over immediate-child exit, including spontaneous exits. Require a probe where the immediate child exits but a descendant survives SIGTERM.
+#+end_example
+
+*Digest.*
+- Frame: the guard decision ([[my:shadow-cljs/docs/specs/2026/2026-10/2026-10-28-drop-managed-runtime-design.org::#guard-children]]) lists what the guard does: own process group, parent check each second, SIGTERM to the group then SIGKILL 2 s later, and exit with the command's code when the command exits.
+- Concern: the watch is a chain, =bun run= then node then the JVM. If =bun run= dies on SIGTERM first, the last rule makes the guard exit at once, before its 2 s SIGKILL, so a JVM slow to stop is left behind. The same holds when =bun run= exits on its own and leaves children running.
+- Position: material and new. The spike passed because the JVM honoured SIGTERM, so it never exercised the gap. The approach holds; one rule is in the wrong order.
+- Options: (a, lean) reword the rules: once stopping starts, the guard stays until its group is empty or the SIGKILL has gone out; when the command exits by itself, the guard signals what is left in its group the same way before exiting with the command's code. The launcher's tests cover it with a fake child that ignores SIGTERM. (b) Also add the reviewer's probe as an evidence block, which ties to finding 4.
+- Question: reword the guard's rules as in (a)?
+
+** Finding 2 — [P2] Define shutdown when bb dev owns the shared server
+:PROPERTIES:
+:CUSTOM_ID: r1-f2
+:CONFIDENCE: 0.96
+:RAW_FILE: docs/specs/2026/2026-10/2026-10-28-drop-managed-runtime-design.org
+:RAW_LINES: 434-434
+:LOCATION: [[orgit-blob:~/dev/my/shadow-cljs::aa24ed3b08688f34a9176e6edcc8066ab32fbede/docs/specs/2026/2026-10/2026-10-28-drop-managed-runtime-design.org#434-434]]
+:END:
+#+begin_example
+The document promises coexistence in either start order, but records only the case where continuous testing starts the server first. In the reverse order, the JVM belongs to bb dev's guarded process group. The specified group shutdown therefore also terminates the server hosting the later test watch. The statement that stopping its watch stops only its build needs an ownership qualification.
+#+end_example
+
+#+begin_example
+Specify the intended reverse-order shutdown behavior and its boundary, then record evidence for both start orders.
+#+end_example
+
+*Digest.*
+- Frame: the attached-watch decision ([[my:shadow-cljs/docs/specs/2026/2026-10/2026-10-28-drop-managed-runtime-design.org::#attached-watch]]) says =bb dev= and continuous testing run side by side "in either start order", and the stop guarantee ([[my:shadow-cljs/docs/specs/2026/2026-10/2026-10-28-drop-managed-runtime-design.org::#stop-together]]) says stopping the launcher's watch stops only its own build.
+- Concern: only one order was observed, testing first. When =bb dev= starts first, its watch owns the server JVM, and the test watch attaches to it. Stopping =bb dev= then kills that JVM, and continuous testing loses its server.
+- Position: material and new, and correct as stated. It is not a regression: today's =bb dev= owns the server the same way. "Either start order" over-claims for shutdown.
+- Options: (a, lean, subtractive) qualify both rows: whichever command started the server owns it, and stopping that command stops the other's builds too, as upstream shadow does today; record the owning case as observed. (b) Make the launcher refuse to own the server, for example by starting a separate =shadow-cljs server= first. That adds a process and a mode for a case nobody has hit.
+- Question: qualify the two rows with the ownership rule, as in (a)?
+
+** Finding 3 — [P2] Establish the ordering behind the compile-line guarantee
+:PROPERTIES:
+:CUSTOM_ID: r1-f3
+:CONFIDENCE: 1
+:RAW_FILE: docs/specs/2026/2026-10/2026-10-28-drop-managed-runtime-design.org
+:RAW_LINES: 372-377
+:LOCATION: [[orgit-blob:~/dev/my/shadow-cljs::aa24ed3b08688f34a9176e6edcc8066ab32fbede/docs/specs/2026/2026-10/2026-10-28-drop-managed-runtime-design.org#372-377]]
+:END:
+#+begin_example
+The cited blocks show print strings, client signal fragments, and refused-connection events. None establishes that output flushing finishes before the completion line or that server listening precedes compilation. Those are the premises used to start the output directly and reject a readiness check. Likewise, the printer-fix row cites a diff count and strings rather than evidence of its buffering behavior.
+#+end_example
+
+#+begin_example
+Add pinned source evidence showing the relevant call ordering and printer channel behavior, or a real-build probe establishing these premises.
+#+end_example
+
+*Digest.*
+- Frame: the start-after-compile guarantee ([[my:shadow-cljs/docs/specs/2026/2026-10/2026-10-28-drop-managed-runtime-design.org::#start-after-compile]]) rests on two premises in its trust boundary: shadow prints =Build completed.= only after the output is written, and the CLI watch starts the server before its first compile. The printer-fix row ([[my:shadow-cljs/docs/specs/2026/2026-10/2026-10-28-drop-managed-runtime-design.org::#keep-printer-fix]]) claims a 1024 buffer that skips verbose-only events.
+- Concern: the cited blocks show the printed strings, not the order of the calls behind them, and the printer row's blocks show a line count and strings, not the buffer.
+- Position: material and new. The premises are probably true, but the spec asserts them without evidence, and two decisions lean on them.
+- Options: (a, lean) add pinned-source blocks: the event that prints the line relative to the flush, the CLI's server start relative to its first compile, and the printer's buffer and filter. If a premise turns out false, the guarantee is reworked. (b) A real-build probe, which costs a JVM per audit.
+- Question: add the source-ordering blocks, as in (a)?
+
+** Finding 4 — [P2] Preserve executable evidence for the observed lifecycle claims
+:PROPERTIES:
+:CUSTOM_ID: r1-f4
+:CONFIDENCE: 0.99
+:RAW_FILE: docs/specs/2026/2026-10/2026-10-28-drop-managed-runtime-design.org
+:RAW_LINES: 406-424
+:LOCATION: [[orgit-blob:~/dev/my/shadow-cljs::aa24ed3b08688f34a9176e6edcc8066ab32fbede/docs/specs/2026/2026-10/2026-10-28-drop-managed-runtime-design.org#406-424]]
+:END:
+#+begin_example
+The guard and attached-watch rows use bare because reproducing the observations starts JVMs or kills a process. Those explanations describe execution cost, not an inability to provide evidence. These are central empirical claims about orphan prevention and shared-server survival; prose observations omit the stand-in implementation, process topology, signal procedure, and checks needed to reproduce them. Future launcher tests do not preserve that evidence.
+#+end_example
+
+#+begin_example
+Include bounded, isolated probes with cleanup and explicit prerequisites for guard-children and attached-watch. Separate accepted policy choices from the empirical claims supporting them.
+#+end_example
+
+*Digest.*
+- Frame: two rows rest on throwaway checks recorded only as prose: the guard row (a SIGKILLed stand-in launcher orphans the watch without the guard and leaves nothing with it) and the attached-watch row (a second CLI attaches to a running server and stops only its own build). Both claim =bare= because a block would start a shadow JVM, and in the guard's case SIGKILL a process.
+- Concern: cost is not inability. The stand-in scripts, the process tree and the checks are gone from the record, so nobody can rerun the observations.
+- Position: material and new. These are the spec's central empirical claims, and the scripts already exist in the scratch spike.
+- Options: (a, lean) move the two checks into a spike document beside the spec, with its own stamp from =bd org spike-verify=. That keeps the JVM starts and the SIGKILL out of every audit, and the rows cite it, with policy kept apart from observation. (b) Evidence blocks in the spec, which start a JVM twice per audit and need the fork jar and npm packages on the machine. (c) Keep =bare= and rely on the launcher's tests, as the bare reasons for restart and stop already do.
+- Question: put the two checks in a spike document the rows cite, as in (a)?
+
+** Finding 5 — [P2] Make evidence pipelines fail when their source lookup fails
+:PROPERTIES:
+:CUSTOM_ID: r1-f5
+:CONFIDENCE: 1
+:RAW_FILE: docs/specs/2026/2026-10/2026-10-28-drop-managed-runtime-design.org
+:RAW_LINES: 483-491
+:LOCATION: [[orgit-blob:~/dev/my/shadow-cljs::aa24ed3b08688f34a9176e6edcc8066ab32fbede/docs/specs/2026/2026-10/2026-10-28-drop-managed-runtime-design.org#483-491]]
+:END:
+#+begin_example
+Several blocks pipe Git through grep and sed under set -e. A missing checkout or pinned commit can make Git fail while the final sed succeeds, so the block returns success with missing evidence. This particularly affects another machine without all four repositories at the hard-coded paths.
+#+end_example
+
+#+begin_example
+Check repository and commit prerequisites explicitly and propagate failures from every pipeline stage using a declared compatible shell or separately checked commands.
+#+end_example
+
+*Digest.*
+- Frame: the evidence blocks read pinned commits of the fork and its consumers with =git show= or =git grep=, piped through =grep= or =sed=, under =set -e=.
+- Concern: =set -e= checks only a pipeline's last command. A missing repository or commit makes =git= fail, =sed= still succeeds, and the block "passes" with its evidence missing.
+- Position: material and new, and true of every piped block. The audit would still show drift, since the output changes, but as missing lines rather than as a failure that names the cause.
+- Options: (a, lean) add =set -o pipefail= as each piped block's second line. zsh and bash both accept it, and the mandated first line stays =set -e=. Re-run each block and get a green audit. (b) Explicit precondition checks per repository, which take more lines and give the same result.
+- Question: add pipefail to every piped block, as in (a)?
+

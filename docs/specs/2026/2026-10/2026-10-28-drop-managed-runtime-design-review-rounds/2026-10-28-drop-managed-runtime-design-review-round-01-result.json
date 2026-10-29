@@ -1,0 +1,58 @@
+{
+  "verdict": "needs-attention",
+  "summary": "tmk, the launcher design has two shutdown ambiguities and three material evidence gaps. Review confined to the target file; no files written or evidence blocks executed.",
+  "findings": [
+    {
+      "title": "[P1] Keep guards alive until descendant cleanup finishes",
+      "body": "The guard must send SIGKILL after two seconds, but must also exit when its immediate command exits. If that command exits on SIGTERM while a descendant ignores it, immediate guard exit prevents escalation and leaves the descendant running. Ordinary command exit with surviving descendants is also undefined. This undermines the whole-process-group shutdown guarantee.",
+      "file": "docs/specs/2026/2026-10/2026-10-28-drop-managed-runtime-design.org",
+      "line_start": 414,
+      "line_end": 418,
+      "confidence": 0.98,
+      "recommendation": "Define cleanup precedence over immediate-child exit, including spontaneous exits. Require a probe where the immediate child exits but a descendant survives SIGTERM."
+    },
+    {
+      "title": "[P2] Define shutdown when bb dev owns the shared server",
+      "body": "The document promises coexistence in either start order, but records only the case where continuous testing starts the server first. In the reverse order, the JVM belongs to bb dev's guarded process group. The specified group shutdown therefore also terminates the server hosting the later test watch. The statement that stopping its watch stops only its build needs an ownership qualification.",
+      "file": "docs/specs/2026/2026-10/2026-10-28-drop-managed-runtime-design.org",
+      "line_start": 434,
+      "line_end": 434,
+      "confidence": 0.96,
+      "recommendation": "Specify the intended reverse-order shutdown behavior and its boundary, then record evidence for both start orders."
+    },
+    {
+      "title": "[P2] Establish the ordering behind the compile-line guarantee",
+      "body": "The cited blocks show print strings, client signal fragments, and refused-connection events. None establishes that output flushing finishes before the completion line or that server listening precedes compilation. Those are the premises used to start the output directly and reject a readiness check. Likewise, the printer-fix row cites a diff count and strings rather than evidence of its buffering behavior.",
+      "file": "docs/specs/2026/2026-10/2026-10-28-drop-managed-runtime-design.org",
+      "line_start": 372,
+      "line_end": 377,
+      "confidence": 1,
+      "recommendation": "Add pinned source evidence showing the relevant call ordering and printer channel behavior, or a real-build probe establishing these premises."
+    },
+    {
+      "title": "[P2] Preserve executable evidence for the observed lifecycle claims",
+      "body": "The guard and attached-watch rows use bare because reproducing the observations starts JVMs or kills a process. Those explanations describe execution cost, not an inability to provide evidence. These are central empirical claims about orphan prevention and shared-server survival; prose observations omit the stand-in implementation, process topology, signal procedure, and checks needed to reproduce them. Future launcher tests do not preserve that evidence.",
+      "file": "docs/specs/2026/2026-10/2026-10-28-drop-managed-runtime-design.org",
+      "line_start": 406,
+      "line_end": 424,
+      "confidence": 0.99,
+      "recommendation": "Include bounded, isolated probes with cleanup and explicit prerequisites for guard-children and attached-watch. Separate accepted policy choices from the empirical claims supporting them."
+    },
+    {
+      "title": "[P2] Make evidence pipelines fail when their source lookup fails",
+      "body": "Several blocks pipe Git through grep and sed under set -e. A missing checkout or pinned commit can make Git fail while the final sed succeeds, so the block returns success with missing evidence. This particularly affects another machine without all four repositories at the hard-coded paths.",
+      "file": "docs/specs/2026/2026-10/2026-10-28-drop-managed-runtime-design.org",
+      "line_start": 483,
+      "line_end": 491,
+      "confidence": 1,
+      "recommendation": "Check repository and commit prerequisites explicitly and propagate failures from every pipeline stage using a declared compatible shell or separately checked commands."
+    }
+  ],
+  "reviewer": {
+    "name": "codex",
+    "version": "codex-cli 0.165.0",
+    "model": "gpt-6-astra",
+    "effort": "medium",
+    "isolated": true
+  }
+}
