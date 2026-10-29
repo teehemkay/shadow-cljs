@@ -11,7 +11,7 @@
 | ITEM                                                                            | DISPOSITION | SURFACE | COMMIT   |
 |---------------------------------------------------------------------------------+-------------+---------+----------|
 | Round 1                                                                         |             |         |          |
-| Finding 1 — [P1] Keep guards alive until descendant cleanup finishes            |             |         |          |
+| Finding 1 — [P1] Keep guards alive until descendant cleanup finishes            | fixed       | new     | [[orgit-rev:~/dev/my/shadow-cljs::33b43696bc1deca14094d3212077ed1a97a67b40][33b43696]] |
 | Finding 2 — [P2] Define shutdown when bb dev owns the shared server             |             |         |          |
 | Finding 3 — [P2] Establish the ordering behind the compile-line guarantee       |             |         |          |
 | Finding 4 — [P2] Preserve executable evidence for the observed lifecycle claims |             |         |          |
@@ -47,6 +47,9 @@ tmk, the launcher design has two shutdown ambiguities and three material evidenc
 :RAW_FILE: docs/specs/2026/2026-10/2026-10-28-drop-managed-runtime-design.org
 :RAW_LINES: 414-418
 :LOCATION: [[orgit-blob:~/dev/my/shadow-cljs::aa24ed3b08688f34a9176e6edcc8066ab32fbede/docs/specs/2026/2026-10/2026-10-28-drop-managed-runtime-design.org#414-418]]
+:SURFACE: new
+:DISPOSITION: fixed
+:COMMIT: [[orgit-rev:~/dev/my/shadow-cljs::33b43696bc1deca14094d3212077ed1a97a67b40][33b43696]]
 :END:
 #+begin_example
 The guard must send SIGKILL after two seconds, but must also exit when its immediate command exits. If that command exits on SIGTERM while a descendant ignores it, immediate guard exit prevents escalation and leaves the descendant running. Ordinary command exit with surviving descendants is also undefined. This undermines the whole-process-group shutdown guarantee.
@@ -62,6 +65,8 @@ Define cleanup precedence over immediate-child exit, including spontaneous exits
 - Position: material and new. The spike passed because the JVM honoured SIGTERM, so it never exercised the gap. The approach holds; one rule is in the wrong order.
 - Options: (a, lean) reword the rules: once stopping starts, the guard stays until its group is empty or the SIGKILL has gone out; when the command exits by itself, the guard signals what is left in its group the same way before exiting with the command's code. The launcher's tests cover it with a fake child that ignores SIGTERM. (b) Also add the reviewer's probe as an evidence block, which ties to finding 4.
 - Question: reword the guard's rules as in (a)?
+
+*Action.* Fixed as (a), routed in bulk. The guard row's list now has the guard stop its group when the command exits by itself, and exit only once a stop has finished, the group empty or the SIGKILL sent; a paragraph after the list says that rule takes precedence over the command's exit and why, naming the =bun run=, node, JVM chain. The reviewer's recommended probe lands in the launcher's tests (a fake command whose child ignores SIGTERM), not in an evidence block, which keeps this row's evidence with finding 4's routing. Residue sweep: =grep -n -i 'exits with the command\|guard.*exit'= over the spec finds only the new wording. Audit green.
 
 ** Finding 2 — [P2] Define shutdown when bb dev owns the shared server
 :PROPERTIES:
