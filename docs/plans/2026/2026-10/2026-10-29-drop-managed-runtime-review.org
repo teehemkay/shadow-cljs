@@ -7,12 +7,12 @@
 #+ARTEFACT_ID: 20261029T220537.596609
 
 #+BEGIN: columnview :id global :maxlevel 2 :format "%40ITEM %DISPOSITION %SURFACE %COMMIT"
-| <40>                                                                                         |             |         |        |
-| ITEM                                                                                         | DISPOSITION | SURFACE | COMMIT |
-|----------------------------------------------------------------------------------------------+-------------+---------+--------|
-| Round 1                                                                                      |             |         |        |
-| Finding 1 — [P2] Reconcile the documentation grep with the required historical section       |             |         |        |
-| Finding 2 — [P2] Prove that the first-compile evaluation answers before compilation finishes |             |         |        |
+| <40>                                                                                         |             |         |          |
+| ITEM                                                                                         | DISPOSITION | SURFACE | COMMIT   |
+|----------------------------------------------------------------------------------------------+-------------+---------+----------|
+| Round 1                                                                                      |             |         |          |
+| Finding 1 — [P2] Reconcile the documentation grep with the required historical section       | fixed       | new     | [[orgit-rev:~/dev/my/shadow-cljs::56e99adbfe01d4f22a61b45447baf57f816ef17e][56e99adb]] |
+| Finding 2 — [P2] Prove that the first-compile evaluation answers before compilation finishes |             |         |          |
 #+END:
 
 * Round 1
@@ -44,6 +44,9 @@ tmk, two load-bearing issues in the plan: an impossible documentation acceptance
 :RAW_FILE: docs/plans/2026/2026-10/2026-10-29-drop-managed-runtime.org
 :RAW_LINES: 426-426
 :LOCATION: [[orgit-blob:~/dev/my/shadow-cljs::8dd668cc12e8482e2c7763b9e009e88c19389ffa/docs/plans/2026/2026-10/2026-10-29-drop-managed-runtime.org#426-426]]
+:SURFACE: new
+:DISPOSITION: fixed
+:COMMIT: [[orgit-rev:~/dev/my/shadow-cljs::56e99adbfe01d4f22a61b45447baf57f816ef17e][56e99adb]]
 :END:
 #+begin_example
 Task 2 step 3 requires adding “Rejected: a managed runtime” and a link whose filename contains “managed”. Both match step 1’s case-insensitive search across doc/. Step 6 therefore cannot print nothing and exit 1 after the prescribed edits. The State table’s expected zero matches has the same contradiction.
@@ -59,6 +62,8 @@ Explicitly allow the historical section and its citation, while checking that ac
 - Position: material and new: an implementer hits a GREEN that can never pass. The rewrite itself holds; only the acceptance check is wrong.
 - Options: (a, lean) step 6 expects the grep to match only inside the architecture doc's new "Rejected: a managed runtime" section, checked mechanically: the grep over every path but that doc prints nothing, and in that doc every match sits under the new heading. The State table's "After" says the same. (b) Avoid the word: title the section differently and cite the design without its path. Cheaper, but it hides the history behind a euphemism and drops the citation the house rules ask for.
 - Question: narrow step 6's expectation to the new section, as in (a)?
+
+*Action.* Fixed as (a), tmk's "LA all". Step 6 now runs two checks: the step 1 grep with the architecture doc excluded prints nothing, and an awk pass over that doc prints every match outside the =Rejected: a managed runtime= heading, which must be none. The awk was run on a sample doc first: silent on a clean one, and it printed the stray line from one carrying a match under a later heading. Step 3 now pins the heading's exact title, since the awk matches it literally, and the State table's "After" names the section. Residue sweep: =grep -n 'step 1 grep\|Rejected: a managed runtime'= over the plan shows no remaining "prints nothing" expectation for the unscoped grep.
 
 ** Finding 2 — [P2] Prove that the first-compile evaluation answers before compilation finishes
 :PROPERTIES:
