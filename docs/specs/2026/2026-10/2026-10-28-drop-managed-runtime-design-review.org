@@ -16,6 +16,9 @@
 | Finding 3 — [P2] Establish the ordering behind the compile-line guarantee       | fixed       | new     | [[orgit-rev:~/dev/my/shadow-cljs::581e765b8727599ab82bbc647faa0f7f01eb7f08][581e765b]] |
 | Finding 4 — [P2] Preserve executable evidence for the observed lifecycle claims | fixed       | new     | [[orgit-rev:~/dev/my/shadow-cljs::73ceb1289c9f70167e49c6b5107bcabed3021685][73ceb128]] |
 | Finding 5 — [P2] Make evidence pipelines fail when their source lookup fails    | fixed       | new     | [[orgit-rev:~/dev/my/shadow-cljs::47dba77d480f4439c66c79b332731c2f7af1006a][47dba77d]] |
+| Round 2                                                                         |             |         |          |
+| Finding 1 — [P2] Establish launcher identity before the guard starts            |             |         |          |
+| Finding 2 — [P2] Demonstrate the modification-time rejection                    |             |         |          |
 #+END:
 
 * Round 1
@@ -179,4 +182,72 @@ Check repository and commit prerequisites explicitly and propagate failures from
 - Question: add pipefail to every piped block, as in (a)?
 
 *Action.* Fixed as (a), routed by tmk in bulk: =set -o pipefail= follows =set -e= in the nine blocks that pipe, every one but =ev-bun-refused=, found with an awk pass keyed on each block's =#+name:=. Before adding it, every piped =git grep= was checked to match at least once, so pipefail turns no legitimate empty result into a failure. Each of the nine was re-executed with the audit's recipe; every result came back byte-identical, and the audit is green. The reviewer's other route, explicit per-repository precondition checks, was not taken, since pipefail surfaces the same failures in one line.
+* Round 2
+:PROPERTIES:
+:CUSTOM_ID: r2
+:DISPATCHED: [2026-10-29 Thu 21:03]
+:REVIEWED_AT: 3db6b0eb3225b2a451a042ce5157988b0aac08ca
+:AUDIT: green
+:PROMPT: [[my:shadow-cljs/docs/specs/2026/2026-10/2026-10-28-drop-managed-runtime-design-review-rounds/2026-10-28-drop-managed-runtime-design-review-round-02-prompt.md]]
+:RESULT: [[my:shadow-cljs/docs/specs/2026/2026-10/2026-10-28-drop-managed-runtime-design-review-rounds/2026-10-28-drop-managed-runtime-design-review-round-02-result.json]]
+:REVIEWER: codex
+:REVIEWER_VERSION: codex-cli 0.165.0
+:REVIEWER_MODEL: gpt-6-astra
+:REVIEWER_EFFORT: medium
+:REVIEWER_ISOLATED: yes
+:VERDICT: needs-attention
+:FINDINGS: 2
+:END:
+Reviewed [[orgit-blob:~/dev/my/shadow-cljs::3db6b0eb3225b2a451a042ce5157988b0aac08ca/docs/specs/2026/2026-10/2026-10-28-drop-managed-runtime-design.org][the artefact at 3db6b0eb]].
+
+#+begin_example
+tmk, two gaps remain: a guard startup race and an executable rejection marked bare. Review confined to the target; no files written or evidence blocks executed.
+#+end_example
+
+** Finding 1 — [P2] Establish launcher identity before the guard starts
+:PROPERTIES:
+:CUSTOM_ID: r2-f1
+:CONFIDENCE: 0.94
+:RAW_FILE: docs/specs/2026/2026-10/2026-10-28-drop-managed-runtime-design.org
+:RAW_LINES: 509-514
+:LOCATION: [[orgit-blob:~/dev/my/shadow-cljs::3db6b0eb3225b2a451a042ce5157988b0aac08ca/docs/specs/2026/2026-10/2026-10-28-drop-managed-runtime-design.org#509-514]]
+:END:
+#+begin_example
+Checking whether the parent changes misses a launcher killed before the guard first records its parent. The guard can observe its adopted parent from its first instruction onward, start the command, and never detect a change. That leaves children running despite the launcher-only SIGKILL guarantee at lines 534–536. The descendant-cleanup revision does not cover this startup window.
+#+end_example
+
+#+begin_example
+Specify that the guard receives the expected launcher identity and checks it before starting the command and during monitoring. Require a test where the launcher dies before guard initialization.
+#+end_example
+
+*Digest.*
+- Frame: the guard decision ([[my:shadow-cljs/docs/specs/2026/2026-10/2026-10-28-drop-managed-runtime-design.org::#guard-children]]) has the guard check once a second whether its parent process has changed, and the stop guarantee ([[my:shadow-cljs/docs/specs/2026/2026-10/2026-10-28-drop-managed-runtime-design.org::#stop-together]]) promises that a SIGKILL to the launcher alone still stops Bun and the watch.
+- Concern: "changed" is measured against the parent the guard sees when it starts. If the launcher dies in the moment between starting the guard and the guard's first look, the guard has already been handed to a new parent, sees that one forever, never notices a change, and starts its command anyway, unsupervised.
+- Position: material but narrow, and new: the parent check predates round 1's fix. The window is the guard's own startup, tens of milliseconds, and the launcher only dies in it to a SIGKILL. The approach holds; the reference point is wrong.
+- Options: (a, lean) the launcher passes its own pid to the guard as an argument; the guard checks that its parent is that pid before starting the command and on every tick, and stops otherwise. A test hands the guard a pid that is already gone and expects it to start nothing. (b) Treat a parent of pid 1 as a dead launcher. Shorter, but it assumes orphans are adopted by pid 1, which a subreaper breaks.
+- Question: pass the launcher's pid to the guard, as in (a)?
+
+** Finding 2 — [P2] Demonstrate the modification-time rejection
+:PROPERTIES:
+:CUSTOM_ID: r2-f2
+:CONFIDENCE: 0.96
+:RAW_FILE: docs/specs/2026/2026-10/2026-10-28-drop-managed-runtime-design.org
+:RAW_LINES: 644-652
+:LOCATION: [[orgit-blob:~/dev/my/shadow-cljs::3db6b0eb3225b2a451a042ce5157988b0aac08ca/docs/specs/2026/2026-10/2026-10-28-drop-managed-runtime-design.org#644-652]]
+:END:
+#+begin_example
+The bare reason says no block can show a missing signal, but the rejection includes an executable claim: modification time can change before writing finishes. A bounded temporary-file probe can pause a writer after its first chunk and demonstrate that a polling reader observes incomplete output. The separate claim about failed compiles also needs evidence or a narrower formulation. This is an empirical rejection, not merely an architectural preference.
+#+end_example
+
+#+begin_example
+Add a deterministic partial-write counterexample and cite it from this row. Establish the failed-compile claim separately, or remove it if the partial-write counterexample is sufficient grounds for rejection.
+#+end_example
+
+*Digest.*
+- Frame: the rejection of polling =out/dev.js='s modification time ([[my:shadow-cljs/docs/specs/2026/2026-10/2026-10-28-drop-managed-runtime-design.org::#rejected-mtime]]) gives two reasons, that it cannot tell a failed compile from a good one and that it can fire mid-write, and claims =bare= because "a missing signal" cannot be shown.
+- Concern: both reasons are claims about behaviour, and neither is shown or cited. The mid-write one is testable, and the failed-compile one is at least a claim about what shadow does.
+- Position: real but minor, and new. The rejection stands either way: the chosen design reads the compile line, which already says whether the build succeeded. A generic partial-write probe would show what some writer does, not what shadow's writer does, so it would not establish the claim either.
+- Options: (a, lean, subtractive) drop the mid-write clause and restate the row as the design preference it is: a modification time says only that the file changed, while the compile line the launcher already reads says whether the build passed ([[my:shadow-cljs/docs/specs/2026/2026-10/2026-10-28-drop-managed-runtime-design.org::#reads-watch-output]]); the bare reason then reads as a preference. (b) Keep both clauses and add evidence: a source block showing how shadow writes the output, plus a failed-compile run. It adds a JVM run to prove a rejected path.
+- Question: narrow the row to the preference, as in (a)?
+
 

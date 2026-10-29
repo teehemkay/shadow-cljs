@@ -1,0 +1,31 @@
+{
+  "verdict": "needs-attention",
+  "summary": "tmk, two gaps remain: a guard startup race and an executable rejection marked bare. Review confined to the target; no files written or evidence blocks executed.",
+  "findings": [
+    {
+      "title": "[P2] Establish launcher identity before the guard starts",
+      "body": "Checking whether the parent changes misses a launcher killed before the guard first records its parent. The guard can observe its adopted parent from its first instruction onward, start the command, and never detect a change. That leaves children running despite the launcher-only SIGKILL guarantee at lines 534–536. The descendant-cleanup revision does not cover this startup window.",
+      "file": "docs/specs/2026/2026-10/2026-10-28-drop-managed-runtime-design.org",
+      "line_start": 509,
+      "line_end": 514,
+      "confidence": 0.94,
+      "recommendation": "Specify that the guard receives the expected launcher identity and checks it before starting the command and during monitoring. Require a test where the launcher dies before guard initialization."
+    },
+    {
+      "title": "[P2] Demonstrate the modification-time rejection",
+      "body": "The bare reason says no block can show a missing signal, but the rejection includes an executable claim: modification time can change before writing finishes. A bounded temporary-file probe can pause a writer after its first chunk and demonstrate that a polling reader observes incomplete output. The separate claim about failed compiles also needs evidence or a narrower formulation. This is an empirical rejection, not merely an architectural preference.",
+      "file": "docs/specs/2026/2026-10/2026-10-28-drop-managed-runtime-design.org",
+      "line_start": 644,
+      "line_end": 652,
+      "confidence": 0.96,
+      "recommendation": "Add a deterministic partial-write counterexample and cite it from this row. Establish the failed-compile claim separately, or remove it if the partial-write counterexample is sufficient grounds for rejection."
+    }
+  ],
+  "reviewer": {
+    "name": "codex",
+    "version": "codex-cli 0.165.0",
+    "model": "gpt-6-astra",
+    "effort": "medium",
+    "isolated": true
+  }
+}
