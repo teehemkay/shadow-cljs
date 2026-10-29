@@ -18,7 +18,7 @@
 | Finding 5 — [P2] Make evidence pipelines fail when their source lookup fails    | fixed       | new     | [[orgit-rev:~/dev/my/shadow-cljs::47dba77d480f4439c66c79b332731c2f7af1006a][47dba77d]] |
 | Round 2                                                                         |             |         |          |
 | Finding 1 — [P2] Establish launcher identity before the guard starts            | fixed       | new     | [[orgit-rev:~/dev/my/shadow-cljs::11ea859586faac9f079a10a70730aba9bff41182][11ea8595]] |
-| Finding 2 — [P2] Demonstrate the modification-time rejection                    |             |         |          |
+| Finding 2 — [P2] Demonstrate the modification-time rejection                    | fixed       | new     | [[orgit-rev:~/dev/my/shadow-cljs::c5fee4c7f4d415beb3b173b85375071a8fa89c58][c5fee4c7]] |
 #+END:
 
 * Round 1
@@ -239,6 +239,9 @@ Specify that the guard receives the expected launcher identity and checks it bef
 :RAW_FILE: docs/specs/2026/2026-10/2026-10-28-drop-managed-runtime-design.org
 :RAW_LINES: 644-652
 :LOCATION: [[orgit-blob:~/dev/my/shadow-cljs::3db6b0eb3225b2a451a042ce5157988b0aac08ca/docs/specs/2026/2026-10/2026-10-28-drop-managed-runtime-design.org#644-652]]
+:SURFACE: new
+:DISPOSITION: fixed
+:COMMIT: [[orgit-rev:~/dev/my/shadow-cljs::c5fee4c7f4d415beb3b173b85375071a8fa89c58][c5fee4c7]]
 :END:
 #+begin_example
 The bare reason says no block can show a missing signal, but the rejection includes an executable claim: modification time can change before writing finishes. A bounded temporary-file probe can pause a writer after its first chunk and demonstrate that a polling reader observes incomplete output. The separate claim about failed compiles also needs evidence or a narrower formulation. This is an empirical rejection, not merely an architectural preference.
@@ -254,5 +257,7 @@ Add a deterministic partial-write counterexample and cite it from this row. Esta
 - Position: real but minor, and new. The rejection stands either way: the chosen design reads the compile line, which already says whether the build succeeded. A generic partial-write probe would show what some writer does, not what shadow's writer does, so it would not establish the claim either.
 - Options: (a, lean, subtractive) drop the mid-write clause and restate the row as the design preference it is: a modification time says only that the file changed, while the compile line the launcher already reads says whether the build passed ([[my:shadow-cljs/docs/specs/2026/2026-10/2026-10-28-drop-managed-runtime-design.org::#reads-watch-output]]); the bare reason then reads as a preference. (b) Keep both clauses and add evidence: a source block showing how shadow writes the output, plus a failed-compile run. It adds a JVM run to prove a rejected path.
 - Question: narrow the row to the preference, as in (a)?
+
+*Action.* Fixed as (a), routed by tmk with finding 1. The mid-write and failed-compile clauses are gone; the row now says a modification time says only that the file changed, while the compile line the launcher already reads says whether the build passed, citing [[my:shadow-cljs/docs/specs/2026/2026-10/2026-10-28-drop-managed-runtime-design.org::#reads-watch-output]]. The bare reason reads as the design preference it is. Recommendation verification: the reviewer's partial-write probe would show a generic writer, not shadow's, so it was not added. Residue sweep: =grep -n 'still being written\|missing signal'= over the spec finds nothing. Audit green.
 
 
