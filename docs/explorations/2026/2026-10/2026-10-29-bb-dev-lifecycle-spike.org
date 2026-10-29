@@ -30,6 +30,7 @@ Each round takes about a minute per JVM it starts. Its =trap= kills every proces
 2. [[#round-2][A SIGKILLed launcher with guards leaves nothing running]] — =shell= — status: explored
 3. [[#round-3][A watch attached to a running server stops only its own build]] — =shell= — status: explored
 4. [[#round-4][A watch that owns the server takes an attached watch down with it]] — =shell= — status: explored
+5. [[#round-5][kiln's =bb watch= joined to a running server needs an open stdin]] — =shell= — status: explored
 
 * Library
 
@@ -307,10 +308,65 @@ sleep 10
 - *Findings:* the attached =watch test= printed =connected to server=, then exited once the owning =watch dev= was stopped, and a later edit to the test left =out/test.js= unchanged. When =bb dev='s watch owns the server, stopping =bb dev= stops continuous testing too.
 - *Impact:* the attached-watch and stop-together rows state the ownership rule and cite this round: whichever command started the server owns it.
 
+* Round 5: kiln's =bb watch= joined to a running server needs an open stdin
+:PROPERTIES:
+:CUSTOM_ID: round-5
+:END:
+
+- *Goal:* establish whether kiln's =bb watch= task, which runs =(shell "bun run --bun shadow-cljs watch test")=, still builds when it joins a server another watch owns and its own stdin is =/dev/null= or closed, as it can be when an agent starts it in the background.
+- *Language:* =shell=, standalone.
+- *Approach:* give the project a =bb.edn= whose =watch= task is copied verbatim from =my:kiln/bb.edn=; start =watch dev= so it owns the server; then join =bb watch= to it three times in turn, stdin from =/dev/null=, stdin closed, and stdin held open, and report for each whether =[:test] Build completed.= appears within 90 s and whether the process still runs. Each attempt is stopped, with its descendants, before the next starts.
+
+*Evidence.*
+
+#+name: round-5-kiln-watch-stdin
+#+begin_src shell :results output :noweb yes
+set -e
+<<lib-project>>
+<<lib-procs>>
+d=$(cd "$(mktemp -d)" && pwd -P); trap 'kill_in "$d"; rm -rf "$d"' EXIT
+make_project "$d"
+printf '%s\n' '{:tasks' ' {watch' '  {:doc "Watch and auto-run tests"' '   :task (shell "bun run --bun shadow-cljs watch test")}}}' > "$d/bb.edn"
+(cd "$d" && exec bun run --bun shadow-cljs watch dev > owner.log 2>&1 < /dev/null) &
+wait_for "$d/owner.log" '^\[:dev\] Build completed\.' 240
+# Report what one joined bb watch did within 90 s, then stop it.
+report() {
+  label=$1 log=$2 pid=$3 i=0
+  while [ "$i" -lt 90 ] && ! grep -Eq '^\[:test\] Build completed\.' "$log"; do sleep 1; i=$((i + 1)); done
+  joined=$(grep -q 'connected to server' "$log" && echo "joined" || echo "did not join")
+  built=$(grep -Eq '^\[:test\] Build completed\.' "$log" && echo "built" || echo "no build in 90 s")
+  alive=$(kill -0 "$pid" 2> /dev/null && echo "still running" || echo "exited")
+  echo "$label: $joined, $built, $alive"
+  if [ "$alive" = "exited" ]; then st=0; wait "$pid" || st=$?; echo "  exit $st, last line: $(tail -n 1 "$log")"; fi
+  signal_tree "$pid" TERM
+  sleep 5
+}
+(cd "$d" && exec bb watch > devnull.log 2>&1 < /dev/null) &
+report "stdin /dev/null" "$d/devnull.log" $!
+(cd "$d" && exec bb watch > closed.log 2>&1 <&-) &
+report "stdin closed" "$d/closed.log" $!
+(cd "$d" && exec bb watch > open.log 2>&1 < <(sleep 3600)) &
+report "stdin open" "$d/open.log" $!
+#+end_src
+
+#+RESULTS: round-5-kiln-watch-stdin
+: stdin /dev/null: joined, no build in 90 s, exited
+:   exit 0, last line: [:test] Compiling ...
+: stdin closed: did not join, no build in 90 s, exited
+:   exit 1, last line: Error while executing task: watch
+: stdin open: joined, built, still running
+
+- *Findings:*
+  - With stdin from =/dev/null=, =bb watch= joined the server, printed =[:test] Compiling ...= as its last line, and exited 0 without a build: no error, and an exit status that reads as success.
+  - With stdin closed, =bb watch= never joined: bb exited 1 with =Error while executing task: watch=, a failure anyone watching sees.
+  - With stdin held open, it joined, built, and kept running.
+- *Impact:* none on the design, whose launcher holds its watch's stdin open. It bears on kiln: a joined =bb watch= started with =/dev/null= as stdin reports success and never builds. Started on its own, with no server running, it owns the server, which survives a closed stdin, so only the joined case is affected.
+
 * Summary
 
 - *Key discoveries:*
   - A SIGKILLed launcher that starts its children directly orphans Bun and the whole watch tree ([[#round-1][round 1]]); with both children under the guard, nothing is left 10 s later ([[#round-2][round 2]]).
   - A watch attached to a server stops only its own build when stopped ([[#round-3][round 3]]), but a watch that owns the server takes every attached watch down with it ([[#round-4][round 4]]).
   - An attached CLI stops its build at end-of-file on stdin, so whatever runs it must hold stdin open (rounds 3 and 4, Approach).
+  - kiln's =bb watch=, joined to a running server with =/dev/null= as stdin, exits 0 after =Compiling ...= without building; closed stdin fails loudly instead ([[#round-5][round 5]]).
 - *Recommendation:* the design's rows =guard-children=, =attached-watch= and =stop-together= cite these rounds in place of their prose observations, and the latter two carry the ownership rule.
