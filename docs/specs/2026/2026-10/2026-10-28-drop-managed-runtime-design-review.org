@@ -13,7 +13,7 @@
 | Round 1                                                                         |             |         |          |
 | Finding 1 — [P1] Keep guards alive until descendant cleanup finishes            | fixed       | new     | [[orgit-rev:~/dev/my/shadow-cljs::33b43696bc1deca14094d3212077ed1a97a67b40][33b43696]] |
 | Finding 2 — [P2] Define shutdown when bb dev owns the shared server             |             |         |          |
-| Finding 3 — [P2] Establish the ordering behind the compile-line guarantee       |             |         |          |
+| Finding 3 — [P2] Establish the ordering behind the compile-line guarantee       | fixed       | new     | [[orgit-rev:~/dev/my/shadow-cljs::581e765b8727599ab82bbc647faa0f7f01eb7f08][581e765b]] |
 | Finding 4 — [P2] Preserve executable evidence for the observed lifecycle claims |             |         |          |
 | Finding 5 — [P2] Make evidence pipelines fail when their source lookup fails    | fixed       | new     | [[orgit-rev:~/dev/my/shadow-cljs::47dba77d480f4439c66c79b332731c2f7af1006a][47dba77d]] |
 #+END:
@@ -98,6 +98,9 @@ Specify the intended reverse-order shutdown behavior and its boundary, then reco
 :RAW_FILE: docs/specs/2026/2026-10/2026-10-28-drop-managed-runtime-design.org
 :RAW_LINES: 372-377
 :LOCATION: [[orgit-blob:~/dev/my/shadow-cljs::aa24ed3b08688f34a9176e6edcc8066ab32fbede/docs/specs/2026/2026-10/2026-10-28-drop-managed-runtime-design.org#372-377]]
+:SURFACE: new
+:DISPOSITION: fixed
+:COMMIT: [[orgit-rev:~/dev/my/shadow-cljs::581e765b8727599ab82bbc647faa0f7f01eb7f08][581e765b]]
 :END:
 #+begin_example
 The cited blocks show print strings, client signal fragments, and refused-connection events. None establishes that output flushing finishes before the completion line or that server listening precedes compilation. Those are the premises used to start the output directly and reject a readiness check. Likewise, the printer-fix row cites a diff count and strings rather than evidence of its buffering behavior.
@@ -113,6 +116,8 @@ Add pinned source evidence showing the relevant call ordering and printer channe
 - Position: material and new. The premises are probably true, but the spec asserts them without evidence, and two decisions lean on them.
 - Options: (a, lean) add pinned-source blocks: the event that prints the line relative to the flush, the CLI's server start relative to its first compile, and the printer's buffer and filter. If a premise turns out false, the guarantee is reworked. (b) A real-build probe, which costs a JVM per audit.
 - Question: add the source-ordering blocks, as in (a)?
+
+*Action.* Fixed as (a), routed in bulk. Four pinned-source blocks, all reading the fork at =ae2f64e9=: =ev-flush-then-complete= shows =build-compile*= calling =build/flush= before it builds and sends the =:build-complete= message; =ev-cli-start-order= shows =from-cli= calling =start!= before =watch-builds=, and =start!= reaching =start-http= through =start-system=; =ev-printer-buffer= shows the printer channel at the base (=sliding-buffer 1=) and at the fork (1024, =:build-log= filtered); =ev-printer-stderr= shows =print-worker-out= binding =*out*= to =*err*=. Every premise held, so no guarantee changed. The start-after-compile row now cites the first two, the readiness-check rejection cites =ev-cli-start-order=, and the printer row cites =ev-printer-buffer= in place of =ev-build-lines=. The stderr block also puts source behind the reads-watch-output row's stderr observation, which it now cites. Recommendation verification: the reviewer's alternative, a real-build probe, was not needed, since the source settles the order. Audit green.
 
 ** Finding 4 — [P2] Preserve executable evidence for the observed lifecycle claims
 :PROPERTIES:
