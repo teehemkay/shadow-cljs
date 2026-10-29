@@ -10,7 +10,7 @@
 #+AUTHOR: Claude Code (claude-opus-5-5)
 #+ORG_VERSION: 9.8.9-??-7427df2d9
 #+OPTIONS: toc:2 num:nil
-#+OUTLINE: content
+#+STARTUP: content
 
 * What this is
 
