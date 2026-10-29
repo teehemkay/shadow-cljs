@@ -14,7 +14,7 @@
 | Finding 1 — [P1] Keep guards alive until descendant cleanup finishes            | fixed       | new     | [[orgit-rev:~/dev/my/shadow-cljs::33b43696bc1deca14094d3212077ed1a97a67b40][33b43696]] |
 | Finding 2 — [P2] Define shutdown when bb dev owns the shared server             |             |         |          |
 | Finding 3 — [P2] Establish the ordering behind the compile-line guarantee       | fixed       | new     | [[orgit-rev:~/dev/my/shadow-cljs::581e765b8727599ab82bbc647faa0f7f01eb7f08][581e765b]] |
-| Finding 4 — [P2] Preserve executable evidence for the observed lifecycle claims |             |         |          |
+| Finding 4 — [P2] Preserve executable evidence for the observed lifecycle claims | fixed       | new     | [[orgit-rev:~/dev/my/shadow-cljs::73ceb1289c9f70167e49c6b5107bcabed3021685][73ceb128]] |
 | Finding 5 — [P2] Make evidence pipelines fail when their source lookup fails    | fixed       | new     | [[orgit-rev:~/dev/my/shadow-cljs::47dba77d480f4439c66c79b332731c2f7af1006a][47dba77d]] |
 #+END:
 
@@ -126,6 +126,9 @@ Add pinned source evidence showing the relevant call ordering and printer channe
 :RAW_FILE: docs/specs/2026/2026-10/2026-10-28-drop-managed-runtime-design.org
 :RAW_LINES: 406-424
 :LOCATION: [[orgit-blob:~/dev/my/shadow-cljs::aa24ed3b08688f34a9176e6edcc8066ab32fbede/docs/specs/2026/2026-10/2026-10-28-drop-managed-runtime-design.org#406-424]]
+:SURFACE: new
+:DISPOSITION: fixed
+:COMMIT: [[orgit-rev:~/dev/my/shadow-cljs::73ceb1289c9f70167e49c6b5107bcabed3021685][73ceb128]]
 :END:
 #+begin_example
 The guard and attached-watch rows use bare because reproducing the observations starts JVMs or kills a process. Those explanations describe execution cost, not an inability to provide evidence. These are central empirical claims about orphan prevention and shared-server survival; prose observations omit the stand-in implementation, process topology, signal procedure, and checks needed to reproduce them. Future launcher tests do not preserve that evidence.
@@ -141,6 +144,8 @@ Include bounded, isolated probes with cleanup and explicit prerequisites for gua
 - Position: material and new. These are the spec's central empirical claims, and the scripts already exist in the scratch spike.
 - Options: (a, lean) move the two checks into a spike document beside the spec, with its own stamp from =bd org spike-verify=. That keeps the JVM starts and the SIGKILL out of every audit, and the rows cite it, with policy kept apart from observation. (b) Evidence blocks in the spec, which start a JVM twice per audit and need the fork jar and npm packages on the machine. (c) Keep =bare= and rely on the launcher's tests, as the bare reasons for restart and stop already do.
 - Question: put the two checks in a spike document the rows cite, as in (a)?
+
+*Action.* Fixed as (a), routed in bulk. [[id:20261029T182039.858528][The lifecycle spike]] carries four rounds that =bd org spike-verify= ran clean on a fresh check, each building a throwaway project and cleaning up every process it started: round 1, an unguarded SIGKILLed launcher orphans Bun and the watch tree; round 2, a guarded one leaves nothing; round 3, an attached watch stops only its own build; round 4, for finding 2, an owning watch takes an attached one down. The guard and attached-watch rows stay =bare=, with reasons that now name the spike rounds, and cite them with =verified:= links in place of the prose observations; the stdin paragraph of reads-watch-output cites round 1 in place of the old 40 s observation. The reviewer's "separate policy from observation" is met by the rows citing observations by round. Drafting turned up a fact the attached-watch row now records: an attached CLI stops its build at end-of-file on stdin. Residue sweep: =grep -n -e '40 s' -e 'node starting' -e 'starts node'= over the spec finds nothing; the chain now reads =bun run=, the shadow-cljs CLI, the JVM, since the CLI runs on Bun under =--bun=. Audit green.
 
 ** Finding 5 — [P2] Make evidence pipelines fail when their source lookup fails
 :PROPERTIES:
