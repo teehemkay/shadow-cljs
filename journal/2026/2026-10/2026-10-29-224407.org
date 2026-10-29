@@ -1,0 +1,34 @@
+#+TITLE: Planning the fork's half of dropping the managed runtime
+#+DATE: [2026-10-29 Thu 22:44]
+#+AUTHOR: Claude Code (claude-opus-5-5)
+#+PROJECT: shadow-cljs
+
+* Context
+
+Context: [[my:shadow-cljs/docs/plans/2026/2026-10/2026-10-29-drop-managed-runtime.org][drop-managed-runtime plan]] (writing-plan, post-merge, before review or execution).
+
+The [[my:shadow-cljs/docs/specs/2026/2026-10/2026-10-28-drop-managed-runtime-design.org][drop-managed-runtime design]] converged earlier today. =/wrp= dispatched it into planning. The spec spans five repositories, so tmk ruled one plan per release step; this is step 1, the fork. The plan and its [[my:shadow-cljs/docs/explorations/2026/2026-10/2026-10-29-drop-managed-runtime-plan-spike.org][plan spike]] landed as [[orgit-rev:~/dev/my/shadow-cljs::81091b7a39505eab457f7f32bd052d642c1cd1cb][81091b7a]] and were fast-forwarded onto =master=. Neither review nor execution has started.
+
+* Project Notes
+
+** Key Decisions
+
+- *Restore, don't rewrite.* =worker.clj= and =worker/impl.clj= differ from upstream only by the managed runtime, so Task 1 checks both out from =f2fbb3a9=, upstream's own commit and the fork's merge base. =repl_impl.clj= keeps exactly three =node-repl*= hunks, and the plan shows that target diff.
+- *Two removals beyond the spec's literal list.* =explicit-js-runtime?= goes, since =managed-runtime?= was its only caller. =node-repl*= stops removing =:js-runtime= from its =:config-merge=, which existed only to stop the worker managing a second process. Both are flagged for tmk.
+- *A replacement suite, not just deletions.* =shadow.cljs.js-runtime-watch-test= pins what the spec promises: no process after a watch, an immediate "No available JS runtime" (during the first compile too), a hand-started Bun connecting, and =node-repl= under Bun. RED against today's code is four named assertion failures; GREEN is 18 tests and 33 assertions on CI's list.
+
+** Gotchas found on the way
+
+- The fork has no running REPL by default. A headless =lein with-profile +cljs,+repl-tests repl :headless= works, with shadow's server started inside it via =server/start!=. Reloading the edited namespaces into that live JVM and re-running the suite went green, so the REPL GREEN step is real and not just the runner's.
+- The spike caught two of my numbers. =repl_impl.clj='s numstat is 13/5, not the 13/4 I eyeballed from the diff. Task 2's grep also matched upstream's =:managed-by :yarn= in =npm_test.clj=.
+- =TCP Port 9630 in use= shows up in every runner log on this machine; another process holds the port.
+
+* Technical Insights
+
+** A Babel shell block loses its tail to any JVM that reads stdin
+
+ob-shell hands a block's body to the shell on stdin. The spec-authoring rules name this hazard for /background/ processes, but a foreground =lein= run does the same: its JVM inherits stdin and reads the rest of the script away. The block then returns only what ran before the first lein call, with no error. The first spike run looked like a test failure until the verdict lines were missing from /every/ round. Fix: give the command =< /dev/null=.
+
+** Read a scan's flags as data before trusting them
+
+A pristine-output scan for =warn= matched =lein test shadow.build.js-runtime-warning-test=, a namespace header. Meanwhile the line I had planned to whitelist, =node-repl-exit {:code 137}=, is INFO and was never flagged at all. Running the scan on the baseline first showed both; the plan's constraint got shorter.
