@@ -22,7 +22,7 @@
 * Goals
 
 1. [[#round-1][Today's CI suites pass at the base, and which non-test lines they log]] — =shell= — status: explored
-2. [[#round-2][Task 1's runner RED is four named assertion failures, not a load error]] — =shell= — status: explored
+2. [[#round-2][Task 1's runner RED is five named assertion failures, not a load error]] — =shell= — status: explored
 3. [[#round-3][Task 1 reaches GREEN on CI's suite list and lein test, with its checks clean]] — =shell= — status: explored
 4. [[#round-4][Task 2's work list, and its exact replacements on Task 1's tree]] — =shell= — status: explored
 
@@ -57,12 +57,13 @@ verdict() {
 }
 # Every line a pristine-output scan flags, timestamps normalized. Left out:
 # compile and tally lines, lein test's per-namespace headers (one namespace
-# is named js-runtime-warning-test), and port 9630's warning, which depends
-# on what else runs on the machine and which the plan's Global Constraints
-# name.
+# is named js-runtime-warning-test), a failed assertion's expected and
+# actual lines, which verdict already reports and whose printed sets have
+# no stable order, and port 9630's warning, which depends on what else runs
+# on the machine and which the plan's Global Constraints name.
 scan() {
   grep -i -E 'warn|error|exception|traceback' "$LOG" \
-    | grep -v -E '^\[:[a-z-]+\] Build completed\.|^[0-9]+ failures, [0-9]+ errors\.$|^lein test |TCP Port 9630 in use' \
+    | grep -v -E '^\[:[a-z-]+\] Build completed\.|^[0-9]+ failures, [0-9]+ errors\.$|^lein test |^ *(expected|actual): |TCP Port 9630 in use' \
     | sed -E 's/^\[[0-9-]+ [0-9:.]+ - /[<time> - /' \
     | sort | uniq -c | sed -E 's/^ +//'
   echo "scan done"
@@ -208,16 +209,18 @@ CLJS
   ;; fork waits for a runtime on the tool's behalf: it polls
   ;; api/repl-runtimes itself. Every other test here watches with :sync
   ;; true, which hides this; deleting the build's cache keeps the compile
-  ;; slow enough to evaluate during it.
+  ;; slow enough to evaluate during it. The compile is checked unfinished
+  ;; after the answer, so an eval that waited for it fails here; a compile
+  ;; that outran the eval fails too, never passes.
   (let [build-id :js-runtime-watch-first-compile]
     (doseq [f (reverse (file-seq (io/file (get-in (runtime/get-instance!) [:config :cache-root])
                                           "builds" (name build-id))))]
       (io/delete-file f true))
     (with-watched-build (script-config build-id) {:sync false}
       (fn [_]
+        (is (= {:err no-runtime-message} (eval-after-select build-id "(println :unreachable)")))
         (is (nil? (-> (api/get-worker build-id) :state-ref deref :last-build-provides))
-            "the eval below starts before the first compile ends")
-        (is (= {:err no-runtime-message} (eval-after-select build-id "(println :unreachable)")))))))
+            "the answer came before the first compile ended")))))
 
 (deftest a-runtime-started-on-the-output-is-evaluated-in
   ;; the contract a launcher relies on: run the output, and the REPL
@@ -406,7 +409,7 @@ scan
 :CUSTOM_ID: round-2
 :END:
 
-- *Goal:* show that Task 1's new suite loads against today's code and fails on exactly the four assertions the plan names, with no load or compile error.
+- *Goal:* show that Task 1's new suite loads against today's code and fails on exactly the five assertions the plan names, with no load or compile error.
 - *Language:* =shell=, standalone.
 - *Approach:* clone at the base, apply Task 1's steps 1 and 2 only, and run the runner on =shadow.cljs.js-runtime-watch-test= alone, as Task 1's step 4 does.
 
@@ -429,17 +432,20 @@ scan
 #+end_src
 
 #+RESULTS: round-2-red
-: exit 1
-: FAIL in (an-eval-during-the-first-compile-gets-no-runtime)
-: FAIL in (an-eval-without-a-runtime-fails-at-once)
-: FAIL in (a-watched-build-starts-no-process)
-: FAIL in (a-watched-build-starts-no-process)
-: Ran 6 tests containing 11 assertions.
-: 4 failures, 0 errors.
-: 1 Error encountered performing task 'run' with profile(s): 'base,system,user,provided,dev,repl-tests'
-: scan done
+#+begin_example
+exit 1
+FAIL in (an-eval-during-the-first-compile-gets-no-runtime)
+FAIL in (an-eval-during-the-first-compile-gets-no-runtime)
+FAIL in (an-eval-without-a-runtime-fails-at-once)
+FAIL in (a-watched-build-starts-no-process)
+FAIL in (a-watched-build-starts-no-process)
+Ran 6 tests containing 11 assertions.
+5 failures, 0 errors.
+1 Error encountered performing task 'run' with profile(s): 'base,system,user,provided,dev,repl-tests'
+scan done
+#+end_example
 
-- *Findings:* the new suite loads against today's code and fails on exactly the four assertions Task 1 names: both cases of =a-watched-build-starts-no-process=, and the =:err= assertions of the two eval tests. No load or compile error. The runner exits 1, and lein appends its own =Error encountered performing task 'run'= line.
+- *Findings:* the new suite loads against today's code and fails on exactly the five assertions Task 1 names: both cases of =a-watched-build-starts-no-process=, the =:err= assertions of the two eval tests, and the first-compile test's post-answer check, since today's eval waits for the compile before it answers. That last failure is the evidence the check catches a waiting eval. No load or compile error. The runner exits 1, and lein appends its own =Error encountered performing task 'run'= line.
 - *Impact:* Task 1's step 4 keeps its expected tally and cites this round; the plan's Global Constraints name lein's line as the one extra a red runner log carries. No stub step is needed.
 
 * Round 3: Task 1's GREEN
@@ -585,7 +591,7 @@ linting took <ms>, errors: 0, warnings: 0
 
 - *Key discoveries:*
   - The base is green and clean, so every warning in a later log is new ([[#round-1][round 1]]).
-  - Task 1's RED is the four promised assertion failures ([[#round-2][round 2]]), and its GREEN holds on CI's list, =lein test=, the name grep and lint ([[#round-3][round 3]]).
+  - Task 1's RED is the five promised assertion failures ([[#round-2][round 2]]), and its GREEN holds on CI's list, =lein test=, the name grep and lint ([[#round-3][round 3]]).
   - The plan had =repl_impl.clj='s removed-line count wrong, 4 for 5 ([[#round-3][round 3]]), and Task 2's grep caught an unrelated upstream line ([[#round-4][round 4]]).
   - A Babel shell block that runs lein must give it =/dev/null= as stdin: the first run of this spike lost every line after each lein call.
 - *Updates made:* folded into the plan as =verified:= citations: Global Constraints § Pristine output (round 1); Task 1's State table (round 1), step 4 (round 2), steps 5 and 9 to 12 (round 3); Task 2's State table (round 4).
