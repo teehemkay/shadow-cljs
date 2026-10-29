@@ -191,7 +191,9 @@ The client was written for Node's =ws= package. Under Bun, =ws= is Bun's own imp
 #+begin_src shell :results output
 set -e
 # Bun's ws on a refused port: which events fire, in order. Port 1 on
-# loopback has no listener. Writes stay in a temp dir.
+# loopback has no listener. Writes stay in a temp dir. Prints event names
+# and the close code only: the error's message is Bun's own wording, which
+# changed between Bun 1.4.3 and 1.4.4.
 if ! command -v bun > /dev/null; then
   echo "precondition failed: bun is not on PATH"
   exit 1
@@ -200,14 +202,14 @@ t=$(mktemp -d); trap 'rm -rf "$t"' EXIT
 printf '%s\n' 'import WebSocket from "ws";' \
   'const s = new WebSocket("ws://127.0.0.1:1/");' \
   's.on("open", () => console.log("open"));' \
-  's.on("error", (e) => console.log("error", e.message));' \
+  's.on("error", () => console.log("error"));' \
   's.on("close", (code) => console.log("close", code));' \
   'setTimeout(() => process.exit(0), 1500);' > "$t/probe.mjs"
 (cd "$t" && bun probe.mjs < /dev/null)
 #+end_src
 
 #+RESULTS: ev-bun-refused
-: error WebSocket connection to 'ws://127.0.0.1:1/' failed: Failed to connect
+: error
 : close 1006
 
 * What the fork keeps and drops                                    :normative:
