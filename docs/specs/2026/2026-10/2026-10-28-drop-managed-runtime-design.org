@@ -364,20 +364,22 @@ git -C ~/dev/my/shadow-cljs show ae2f64e999fdc810ef950f6b61e444be472e5475:src/ma
 : 706:                    (when (and (not (stdin-closed?))
 : 712:                    (stop-builds!))))
 
-The poll does not catch a closed pipe: when a SIGKILL ended the stand-in launcher on [2026-10-28 Wed], closing the watch's stdin, the watch kept running for the 40 s it was watched ([[#guard-children]]). Whether a =/dev/null= stdin trips it is unverified; it tests =.available= for -1. Holding the pipe open is safe either way, so the launcher never depends on the answer, and its shutdown never relies on the poll.
+The poll does not catch a closed pipe: a SIGKILL to an unguarded stand-in launcher closes the watch's stdin, and the watch keeps running ([[my:shadow-cljs/docs/explorations/2026/2026-10/2026-10-29-bb-dev-lifecycle-spike.org::#round-1][verified: lifecycle round 1]]). Whether a =/dev/null= stdin trips it is unverified; it tests =.available= for -1. Holding the pipe open is safe either way, so the launcher never depends on the answer, and its shutdown never relies on the poll.
 
 ** bb dev works beside a server that is already running
 :PROPERTIES:
 :CUSTOM_ID: attached-watch
 :KIND: decision
 :EVIDENCE: bare
-:BARE-REASON: Observed in a throwaway project on [2026-10-28 Wed]; a block would start two shadow JVMs per audit.
+:BARE-REASON: Its evidence is the lifecycle spike's rounds 3 and 4, run by bd org spike-verify, since each starts a shadow JVM in a throwaway project.
 :END:
 
-When a shadow server is already running in the project, such as the one kiln's =bb watch= starts for its =:test= build, the launcher's =shadow-cljs watch <build>= attaches to it instead of starting another. The launcher handles that case exactly like the other, because the attached CLI prints the same lines. Observed on [2026-10-28 Wed] with the fork's 3.5.7-bun.2, a server watching =:test=, and a second CLI running =watch dev=:
-- the attached CLI printed =shadow-cljs - connected to server=, then =[:dev] Build completed.= for the first compile and again for a recompile after an edit;
-- a third CLI asking to watch =:dev= printed =already started= with a stack trace and exited 1;
-- stopping the attached CLI stopped the =:dev= watch (its output stopped updating after a later edit), and the server and its =:test= watch kept running.
+When a shadow server is already running in the project, such as the one kiln's =bb watch= starts for its =:test= build, the launcher's =shadow-cljs watch <build>= attaches to it instead of starting another. The launcher handles that case exactly like the other, because the attached CLI prints the same lines. With the fork's 3.5.7-bun.2, a server watching =:test=, and a second CLI running =watch dev= ([[my:shadow-cljs/docs/explorations/2026/2026-10/2026-10-29-bb-dev-lifecycle-spike.org::#round-3][verified: lifecycle round 3]]):
+- the attached CLI prints =connected to server=, then its own =[:dev] Build completed.= line;
+- a third CLI asking to watch =:dev= prints =already started= and exits 1;
+- stopping the attached CLI stops the =:dev= watch alone: an edit to =:dev='s source no longer rewrites its output, and the server keeps compiling =:test=.
+
+An attached CLI stops its build when its stdin reaches end-of-file, which the launcher's open pipe never does ([[#reads-watch-output]]).
 
 So =bb dev= and continuous testing run side by side, in either start order. tmk ruled on [2026-10-28 Wed] that refusing a running server would block that pairing ([[#rejected-refuse-server]]). A =:dev= already watched elsewhere needs no detection of its own: the watch exits 1, and the launcher reports it and exits ([[#stop-together]]).
 
@@ -501,7 +503,7 @@ The report is one line, such as =[bb dev] bun exited with code 1 after 0.4s; wai
 :CUSTOM_ID: guard-children
 :KIND: decision
 :EVIDENCE: bare
-:BARE-REASON: Observed in a throwaway project on [2026-10-28 Wed] and [2026-10-29 Thu]; a block would start a shadow JVM per audit and SIGKILL a process.
+:BARE-REASON: Its evidence is the lifecycle spike's rounds 1 and 2, run by bd org spike-verify, since each starts a shadow JVM and SIGKILLs a process.
 :END:
 
 The launcher starts the watch and Bun each through one small guard script that bunbushka ships beside the launcher, run as =bun <guard> <command…>=. The guard:
@@ -511,13 +513,13 @@ The launcher starts the watch and Bun each through one small guard script that b
 - when the command exits by itself, stops the group the same way before exiting, since the command's own children may still be running;
 - exits with the command's exit code, or non-zero when the guard started the stop, and only once the stop has finished: the group is empty, or the SIGKILL has gone out.
 
-The last rule takes precedence over the command's exit. The watch is a chain, =bun run= starting node starting the JVM, and the first link can die on SIGTERM while the JVM is still stopping; a guard that exited with it would never send the SIGKILL. The launcher's tests cover this with a fake command whose child ignores SIGTERM.
+The last rule takes precedence over the command's exit. The watch is a chain, =bun run= starting the shadow-cljs CLI starting the JVM, and the first link can die on SIGTERM while the JVM is still stopping; a guard that exited with it would never send the SIGKILL. The launcher's tests cover this with a fake command whose child ignores SIGTERM.
 
-The group matters for the watch: =bun run --bun shadow-cljs watch= starts node, which starts the JVM, and only signalling the group reaches all three. One script covers Bun and the watch, so Bun's command line stays plain. tmk chose guarding both on [2026-10-29 Thu]; the alternative was guarding Bun only and recording the watch orphan as a known limit.
+The group matters for the watch: =bun run --bun shadow-cljs watch= starts the shadow-cljs CLI, which starts the JVM, and only signalling the group reaches all three. One script covers Bun and the watch, so Bun's command line stays plain. tmk chose guarding both on [2026-10-29 Thu]; the alternative was guarding Bun only and recording the watch orphan as a known limit.
 
-Why it is needed, observed with a stand-in launcher in bb that started the watch, waited for its compile line, then started Bun, and was then SIGKILLed:
-- with only a parent check preloaded into Bun, Bun exited within 1 s, and =bun run=, node and the JVM were all still running 40 s later. Today's =bb dev= orphans the watch the same way, since it runs the watch with =shell= and nothing else;
-- with both children under a guard of this shape, on [2026-10-29 Thu], no process of the project was left 10 s after the SIGKILL, and the port its server held was free.
+Why it is needed, shown with a stand-in launcher in bb that starts the watch, waits for its compile line, starts Bun, and is then SIGKILLed:
+- started directly, Bun, =bun run=, the shadow-cljs CLI and the JVM all outlive the launcher ([[my:shadow-cljs/docs/explorations/2026/2026-10/2026-10-29-bb-dev-lifecycle-spike.org::#round-1][verified: lifecycle round 1]]). Today's =bb dev= orphans the watch the same way, since it runs the watch with =shell= and nothing else;
+- with both children under a guard following the rules above, no process of the project is left 10 s after the SIGKILL ([[my:shadow-cljs/docs/explorations/2026/2026-10/2026-10-29-bb-dev-lifecycle-spike.org::#round-2][verified: lifecycle round 2]]).
 
 ** Stopping bb dev stops Bun
 :PROPERTIES:

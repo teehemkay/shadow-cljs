@@ -1,0 +1,316 @@
+:PROPERTIES:
+:ID:       20261029T182039.858528
+:CREATED:  [2026-10-29 Thu 18:20]
+:END:
+
+#+TITLE: bb dev's process lifecycle — spike
+#+SUBTITLE: What a SIGKILLed launcher leaves behind, with and without guards, and what stopping one watch does to another watch on the same shadow server
+#+SPIKE_FORMAT: spike/1
+#+ORG_VERSION: 9.8.9-??-7427df2d9
+#+DATE: [2026-10-29 Thu]
+#+OPTIONS: toc:2 num:nil
+#+STARTUP: overview
+
+*For agentic workers:* re-run with =bd org spike-verify= on this file; =--write= refreshes every result from execution, unless it prints =not written:= with the reason. A run that stops before Emacs launches, or because Emacs cannot launch, prints no =written:= or =not written:= line: it exits non-zero, with its reason on stderr when it has one. If bd itself fails mid-run, it exits 70 with a stack trace on stderr, after whatever the run printed.
+
+*Serves:* [[id:20261028T164829.836099][the drop-managed-runtime design]], whose rows =guard-children=, =attached-watch= and =stop-together= cite these rounds. The checks moved here from that spec's review, [[id:20261029T181052.976186][round 1]], findings 2 and 4.
+
+*Language set:* ={shell}= — every language this spike touches. Each round's =Language:= field names the one it used.
+
+*Prerequisites.* Every round builds a throwaway shadow-cljs project in a temp directory and starts real processes in it:
+- =bb=, =bun= and the Clojure CLI on =PATH=;
+- the fork's =org.clojars.teehemkay/shadow-cljs= 3.5.7-bun.2 resolvable by the Clojure CLI, and the npm =shadow-cljs= 3.5.7 package installable by =bun install=;
+- a free port for each shadow server, which shadow picks on its own when 9630 is taken.
+
+Each round takes about a minute per JVM it starts. Its =trap= kills every process whose working directory is inside its temp directory, so a failed round leaves nothing running.
+
+* Goals
+
+1. [[#round-1][A SIGKILLed launcher without guards leaves the watch running]] — =shell= — status: explored
+2. [[#round-2][A SIGKILLed launcher with guards leaves nothing running]] — =shell= — status: explored
+3. [[#round-3][A watch attached to a running server stops only its own build]] — =shell= — status: explored
+4. [[#round-4][A watch that owns the server takes an attached watch down with it]] — =shell= — status: explored
+
+* Library
+
+What the rounds share. Run on their own, these blocks only define and print nothing; each round takes them through noweb.
+
+#+name: lib-project
+#+begin_src shell :results output
+# Write a minimal shadow-cljs project into $1, with two builds: :dev, a
+# node-script whose main prints "main ran", and :test, a node-test.
+make_project() {
+  p=$1
+  mkdir -p "$p/src/demo" "$p/test/demo"
+  printf '%s\n' '{:paths ["src" "test"]' \
+    ' :deps {org.clojars.teehemkay/shadow-cljs {:mvn/version "3.5.7-bun.2"}}}' > "$p/deps.edn"
+  printf '%s\n' '{:deps true' ' :builds' \
+    ' {:dev {:target :node-script :main demo.core/main :output-to "out/dev.js"}' \
+    '  :test {:target :node-test :output-to "out/test.js" :autorun false :ns-regexp "-test$"}}}' > "$p/shadow-cljs.edn"
+  printf '%s\n' '{"name": "lifecycle-spike", "devDependencies": {"shadow-cljs": "3.5.7"}}' > "$p/package.json"
+  printf '%s\n' '(ns demo.core)' '(defn main [] (println "main ran"))' > "$p/src/demo/core.cljs"
+  printf '%s\n' '(ns demo.core-test (:require [cljs.test :refer [deftest is]]))' '(deftest t (is (= 1 1)))' > "$p/test/demo/core_test.cljs"
+  (cd "$p" && bun install > /dev/null 2>&1 < /dev/null)
+}
+#+end_src
+
+#+RESULTS: lib-project
+
+#+name: lib-procs
+#+begin_src shell :results output
+# The pids of every process whose working directory is $1 or below it. A
+# round's own shell stays outside $1 and starts each command in a
+# subshell that cds there, so only the commands under test count.
+procs_in() {
+  lsof -d cwd -Fpn 2> /dev/null \
+    | awk -v d="$1" '/^p/ {p = substr($0, 2)} /^n/ {if (index(substr($0, 2), d) == 1) print p}'
+}
+# Their short command names, counted, on one line.
+names_in() {
+  pids=$(procs_in "$1")
+  if [ -z "$pids" ]; then echo "none"; return; fi
+  echo "$pids" | xargs ps -o ucomm= -p | sort | uniq -c | awk '{print $2 " x" $1}' | paste -sd ' ' -
+}
+# Kill them all, for a round's trap.
+kill_in() {
+  for p in $(procs_in "$1"); do kill -9 "$p" 2> /dev/null || true; done
+}
+# Send signal $2 to process $1 and every descendant of it, as a signal to
+# its process group would; a non-interactive zsh cannot give a background
+# command a group of its own.
+signal_tree() {
+  for c in $(pgrep -P "$1"); do signal_tree "$c" "$2"; done
+  kill "-$2" "$1" 2> /dev/null || true
+}
+# Wait up to $3 seconds for the file $1 to contain the extended regexp $2.
+wait_for() {
+  i=0
+  while ! grep -Eq -- "$2" "$1" 2> /dev/null; do
+    i=$((i + 1))
+    if [ "$i" -gt "$3" ]; then echo "timed out waiting for $2"; exit 1; fi
+    sleep 1
+  done
+}
+#+end_src
+
+#+RESULTS: lib-procs
+
+#+name: lib-launcher
+#+begin_src shell :results output
+# Write a stand-in for bb dev's launcher into $1: launcher.clj runs the
+# :dev watch, reads its stdout and stderr, and starts bun out/dev.js once
+# the first "[:dev] Build completed." line arrives. With GUARD=1 in its
+# environment it starts both children through guard.cjs, which follows
+# the design's guard rules: the command in a process group of its own,
+# the parent checked once a second, and on the parent's loss, a signal,
+# or the command's own exit, SIGTERM to the group, then SIGKILL once the
+# group is empty or 2 s have passed.
+write_launcher() {
+  printf '%s\n' \
+    '(require (quote [babashka.process :as p]) (quote [clojure.java.io :as io]))' \
+    '(def guard? (= "1" (System/getenv "GUARD")))' \
+    '(defn cmd [& args] (if guard? (into ["bun" "guard.cjs"] args) (vec args)))' \
+    '(let [watch (p/process (cmd "bun" "run" "--bun" "shadow-cljs" "watch" "dev") {:err :out})' \
+    '      rdr (io/reader (:out watch))]' \
+    '  (loop []' \
+    '    (when-some [l (.readLine rdr)]' \
+    '      (println "[watch]" l)' \
+    '      (if (re-find #"^\[:dev\] Build completed\." l)' \
+    '        (do (p/process (cmd "bun" "out/dev.js") {:out :inherit :err :inherit})' \
+    '            (println "[bb dev] bun started")' \
+    '            (future (loop [] (when-some [l (.readLine rdr)] (println "[watch]" l) (recur))))' \
+    '            @(promise))' \
+    '        (recur)))))' > "$1/launcher.clj"
+  printf '%s\n' \
+    'const { spawn } = require("child_process");' \
+    'const parent = process.ppid;' \
+    'const child = spawn(process.argv[2], process.argv.slice(3), { stdio: "inherit", detached: true });' \
+    'let code = 1, stopping = false;' \
+    'const alive = () => { try { process.kill(-child.pid, 0); return true; } catch (e) { return false; } };' \
+    'const stop = () => {' \
+    '  if (stopping) return;' \
+    '  stopping = true;' \
+    '  try { process.kill(-child.pid, "SIGTERM"); } catch (e) {}' \
+    '  const t0 = Date.now();' \
+    '  setInterval(() => {' \
+    '    if (alive() && Date.now() - t0 < 2000) return;' \
+    '    try { process.kill(-child.pid, "SIGKILL"); } catch (e) {}' \
+    '    process.exit(code);' \
+    '  }, 100);' \
+    '};' \
+    'setInterval(() => { if (process.ppid !== parent) stop(); }, 1000);' \
+    'process.on("SIGTERM", stop);' \
+    'process.on("SIGINT", stop);' \
+    'child.on("exit", (c) => { code = c ?? 1; stop(); });' > "$1/guard.cjs"
+}
+#+end_src
+
+#+RESULTS: lib-launcher
+
+* Round 1: A SIGKILLed launcher without guards leaves the watch running
+:PROPERTIES:
+:CUSTOM_ID: round-1
+:END:
+
+- *Goal:* establish what a SIGKILL to the launcher leaves behind when it starts its children directly, as today's =bb dev= starts the watch.
+- *Language:* =shell=, standalone.
+- *Approach:* run the stand-in launcher with =GUARD= unset until Bun's client prints =ready!=, SIGKILL the launcher alone, wait 10 s, and list by command name what still runs in the project.
+
+*Evidence.*
+
+#+name: round-1-unguarded
+#+begin_src shell :results output :noweb yes
+set -e
+<<lib-project>>
+<<lib-procs>>
+<<lib-launcher>>
+d=$(cd "$(mktemp -d)" && pwd -P); trap 'kill_in "$d"; rm -rf "$d"' EXIT
+make_project "$d"; write_launcher "$d"
+(cd "$d" && exec bb launcher.clj > launcher.log 2>&1 < /dev/null) &
+lp=$!
+wait_for "$d/launcher.log" 'ready!' 240
+echo "before: $(names_in "$d")"
+kill -9 "$lp"
+sleep 10
+echo "10 s after SIGKILL: $(names_in "$d")"
+#+end_src
+
+#+RESULTS: round-1-unguarded
+: before: bb x1 bun x3 java x1
+: 10 s after SIGKILL: bun x3 java x1
+
+- *Findings:* everything but the launcher outlives it. Before the SIGKILL the project ran =bb=, three =bun= processes (the watch's =bun run=, the shadow-cljs CLI under Bun, and =bun out/dev.js=) and the shadow JVM; 10 s after, the same three =bun= processes and the JVM were still running. Without a guard, Bun and the whole watch tree are orphaned.
+- *Impact:* the guard row's account of what it solves now cites this round in place of the prose observation.
+
+* Round 2: A SIGKILLed launcher with guards leaves nothing running
+:PROPERTIES:
+:CUSTOM_ID: round-2
+:END:
+
+- *Goal:* establish that the guard rules take the whole watch tree and Bun down when the launcher is SIGKILLed.
+- *Language:* =shell=, standalone.
+- *Approach:* as round 1, with =GUARD= set to 1, so the watch and Bun each run under =guard.cjs=.
+
+*Evidence.*
+
+#+name: round-2-guarded
+#+begin_src shell :results output :noweb yes
+set -e
+<<lib-project>>
+<<lib-procs>>
+<<lib-launcher>>
+d=$(cd "$(mktemp -d)" && pwd -P); trap 'kill_in "$d"; rm -rf "$d"' EXIT
+make_project "$d"; write_launcher "$d"
+(cd "$d" && GUARD=1 exec bb launcher.clj > launcher.log 2>&1 < /dev/null) &
+lp=$!
+wait_for "$d/launcher.log" 'ready!' 240
+echo "before: $(names_in "$d")"
+kill -9 "$lp"
+sleep 10
+echo "10 s after SIGKILL: $(procs_in "$d" | wc -l | tr -d ' ') processes"
+#+end_src
+
+#+RESULTS: round-2-guarded
+: before: bb x1 bun x5 java x1
+: 10 s after SIGKILL: 0 processes
+
+- *Findings:* with both children under the guard, the two =guard.cjs= processes add two =bun= processes to round 1's list, and 10 s after the SIGKILL no process is left in the project.
+- *Impact:* the guard row's evidence. The guard here follows the rules the design settled after its review's finding 1, so this round also exercises the stop-then-exit order, though not the case of a child that ignores SIGTERM, which stays with the launcher's tests.
+
+* Round 3: A watch attached to a running server stops only its own build
+:PROPERTIES:
+:CUSTOM_ID: round-3
+:END:
+
+- *Goal:* establish that =watch dev= attaches to a server another CLI started for =:test=, prints the same compile lines, refuses a duplicate, and when stopped stops =:dev= alone.
+- *Language:* =shell=, standalone.
+- *Approach:* start =watch test= first, then =watch dev=, then a second =watch dev=; stop the attached =watch dev= with SIGTERM to it and its descendants; edit a source file of each build and see which output file is rewritten. =signal_tree= signals a command and all its descendants, standing in for a signal to its process group. An attached CLI reads its stdin until end-of-file and stops its build there (=from-cli=, the comment "when remote socket is active read until eof"), so each attached watch gets a stdin that stays open, as the launcher's pipe does; =/dev/null= stopped it at =Compiling ...= while this spike was drafted.
+
+*Evidence.*
+
+#+name: round-3-attached
+#+begin_src shell :results output :noweb yes
+set -e
+<<lib-project>>
+<<lib-procs>>
+d=$(cd "$(mktemp -d)" && pwd -P); trap 'kill_in "$d"; rm -rf "$d"' EXIT
+make_project "$d"
+(cd "$d" && exec bun run --bun shadow-cljs watch test > owner.log 2>&1 < /dev/null) &
+wait_for "$d/owner.log" '^\[:test\] Build completed\.' 240
+(cd "$d" && exec bun run --bun shadow-cljs watch dev > attached.log 2>&1 < <(sleep 3600)) &
+ap=$!
+wait_for "$d/attached.log" '^\[:dev\] Build completed\.' 240
+grep -m1 -o 'connected to server' "$d/attached.log"
+if (cd "$d" && exec bun run --bun shadow-cljs watch dev > third.log 2>&1 < /dev/null); then echo "third: exit 0"; else echo "third: exit $?"; fi
+grep -m1 -o 'already started' "$d/third.log"
+signal_tree "$ap" TERM
+sleep 5
+before_dev=$(stat -f %m "$d/out/dev.js"); before_test=$(stat -f %m "$d/out/test.js")
+sleep 1
+printf '%s\n' '(ns demo.core)' '(defn main [] (println "main ran again"))' > "$d/src/demo/core.cljs"
+printf '%s\n' '(ns demo.core-test (:require [cljs.test :refer [deftest is]]))' '(deftest t (is (= 2 2)))' > "$d/test/demo/core_test.cljs"
+sleep 10
+[ "$(stat -f %m "$d/out/dev.js")" = "$before_dev" ] && echo "out/dev.js after the edit: unchanged" || echo "out/dev.js after the edit: rewritten"
+[ "$(stat -f %m "$d/out/test.js")" = "$before_test" ] && echo "out/test.js after the edit: unchanged" || echo "out/test.js after the edit: rewritten"
+#+end_src
+
+#+RESULTS: round-3-attached
+: connected to server
+: third: exit 1
+: already started
+: out/dev.js after the edit: unchanged
+: out/test.js after the edit: rewritten
+
+- *Findings:* the attached CLI printed =connected to server= and its own =[:dev] Build completed.= line. A second =watch dev= printed =already started= and exited 1. After the attached =watch dev= was stopped, an edit to =:dev='s source left =out/dev.js= unchanged, and an edit to the test rewrote =out/test.js=: stopping the attached watch stopped =:dev= alone, and the server kept =:test= going.
+- *Impact:* the attached-watch row cites this round for the order where continuous testing starts first.
+
+* Round 4: A watch that owns the server takes an attached watch down with it
+:PROPERTIES:
+:CUSTOM_ID: round-4
+:END:
+
+- *Goal:* establish what stopping =bb dev='s watch does to continuous testing when =bb dev= started first and so owns the server.
+- *Language:* =shell=, standalone.
+- *Approach:* start =watch dev= first, then =watch test=, which attaches; stop the owning =watch dev= with SIGTERM to it and its descendants; see whether the attached =watch test= is still running and whether an edit to the test file still rewrites =out/test.js=. The attached watch gets an open stdin, as in round 3.
+
+*Evidence.*
+
+#+name: round-4-owner
+#+begin_src shell :results output :noweb yes
+set -e
+<<lib-project>>
+<<lib-procs>>
+d=$(cd "$(mktemp -d)" && pwd -P); trap 'kill_in "$d"; rm -rf "$d"' EXIT
+make_project "$d"
+(cd "$d" && exec bun run --bun shadow-cljs watch dev > owner.log 2>&1 < /dev/null) &
+op=$!
+wait_for "$d/owner.log" '^\[:dev\] Build completed\.' 240
+(cd "$d" && exec bun run --bun shadow-cljs watch test > attached.log 2>&1 < <(sleep 3600)) &
+ap=$!
+wait_for "$d/attached.log" '^\[:test\] Build completed\.' 240
+grep -m1 -o 'connected to server' "$d/attached.log"
+signal_tree "$op" TERM
+sleep 10
+kill -0 "$ap" 2> /dev/null && echo "attached watch test: still running" || echo "attached watch test: exited"
+before_test=$(stat -f %m "$d/out/test.js")
+sleep 1
+printf '%s\n' '(ns demo.core-test (:require [cljs.test :refer [deftest is]]))' '(deftest t (is (= 2 2)))' > "$d/test/demo/core_test.cljs"
+sleep 10
+[ "$(stat -f %m "$d/out/test.js")" = "$before_test" ] && echo "out/test.js after the edit: unchanged" || echo "out/test.js after the edit: rewritten"
+#+end_src
+
+#+RESULTS: round-4-owner
+: connected to server
+: attached watch test: exited
+: out/test.js after the edit: unchanged
+
+- *Findings:* the attached =watch test= printed =connected to server=, then exited once the owning =watch dev= was stopped, and a later edit to the test left =out/test.js= unchanged. When =bb dev='s watch owns the server, stopping =bb dev= stops continuous testing too.
+- *Impact:* the attached-watch and stop-together rows state the ownership rule and cite this round: whichever command started the server owns it.
+
+* Summary
+
+- *Key discoveries:*
+  - A SIGKILLed launcher that starts its children directly orphans Bun and the whole watch tree ([[#round-1][round 1]]); with both children under the guard, nothing is left 10 s later ([[#round-2][round 2]]).
+  - A watch attached to a server stops only its own build when stopped ([[#round-3][round 3]]), but a watch that owns the server takes every attached watch down with it ([[#round-4][round 4]]).
+  - An attached CLI stops its build at end-of-file on stdin, so whatever runs it must hold stdin open (rounds 3 and 4, Approach).
+- *Recommendation:* the design's rows =guard-children=, =attached-watch= and =stop-together= cite these rounds in place of their prose observations, and the latter two carry the ownership rule.
