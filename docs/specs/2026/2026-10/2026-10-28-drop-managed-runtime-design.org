@@ -291,7 +291,7 @@ The launcher is one bb namespace shipped in bunbushka, published as =com.exidia/
 :EVIDENCE: ev-consumer-entry ev-build-lines
 :END:
 
-The launcher runs the consumer's watch command, =bun run --bun shadow-cljs watch <build>=, as its child, copies the child's output to its own stdout unchanged, and reads it line by line. A line starting =[:<build>] Build completed.= is a successful compile of the watched build; =[:<build>] Build failure:= is a failed one. These come from =shadow.cljs.devtools.server.util=, and it is the only coupling the launcher has to shadow. tmk accepted this on [2026-10-28 Wed]; the alternatives are [[#rejected-build-hook]] and [[#rejected-mtime]].
+The launcher runs the consumer's watch command, =bun run --bun shadow-cljs watch <build>=, as its child, copies the child's stdout and stderr to its own stdout unchanged, and reads both line by line. Both, because a watch that starts its own server prints its compile lines on stderr: a stand-in reading only stdout never saw =[:dev] Build completed.= on [2026-10-28 Wed], and saw it once it read stderr too. A line starting =[:<build>] Build completed.= is a successful compile of the watched build; =[:<build>] Build failure:= is a failed one. These come from =shadow.cljs.devtools.server.util=, and it is the only coupling the launcher has to shadow. tmk accepted this on [2026-10-28 Wed]; the alternatives are [[#rejected-build-hook]] and [[#rejected-mtime]].
 
 The coupling's failure is loud. If upstream rewords the line, Bun never starts: no =[bun]= line appears, and =(shadow/repl :dev)= reports no available JS runtime.
 
@@ -312,7 +312,7 @@ git -C ~/dev/my/shadow-cljs show ae2f64e999fdc810ef950f6b61e444be472e5475:src/ma
 : 706:                    (when (and (not (stdin-closed?))
 : 712:                    (stop-builds!))))
 
-Whether a =/dev/null= stdin or a closed pipe makes =stdin-closed?= true is unverified: it tests =.available= for -1. Holding the pipe open is safe either way, so the launcher never depends on the answer.
+The poll does not catch a closed pipe: when a SIGKILL ended the stand-in launcher on [2026-10-28 Wed], closing the watch's stdin, the watch kept running for the 40 s it was watched ([[#guard-children]]). Whether a =/dev/null= stdin trips it is unverified; it tests =.available= for -1. Holding the pipe open is safe either way, so the launcher never depends on the answer, and its shutdown never relies on the poll.
 
 ** bb dev works beside a server that is already running
 :PROPERTIES:
@@ -401,6 +401,26 @@ A Bun that dies at start almost always died loading the build's code, so restart
 
 The report is one line, such as =[bb dev] bun exited with code 1 after 0.4s; waiting for the next successful compile=. The lines Bun printed before dying are already above it ([[#interleaved-output]]).
 
+** Each child runs under a guard that outlives the launcher
+:PROPERTIES:
+:CUSTOM_ID: guard-children
+:KIND: decision
+:EVIDENCE: bare
+:BARE-REASON: Observed in a throwaway project on [2026-10-28 Wed] and [2026-10-29 Thu]; a block would start a shadow JVM per audit and SIGKILL a process.
+:END:
+
+The launcher starts the watch and Bun each through one small guard script that bunbushka ships beside the launcher, run as =bun <guard> <command…>=. The guard:
+- starts the command in a process group of its own;
+- checks once a second whether its parent process has changed, which means the launcher is gone;
+- on that, or on SIGTERM or SIGINT, sends SIGTERM to the command's whole group and SIGKILL 2 s later;
+- exits with the command's exit code when the command exits.
+
+The group matters for the watch: =bun run --bun shadow-cljs watch= starts node, which starts the JVM, and only signalling the group reaches all three. One script covers Bun and the watch, so Bun's command line stays plain. tmk chose guarding both on [2026-10-29 Thu]; the alternative was guarding Bun only and recording the watch orphan as a known limit.
+
+Why it is needed, observed with a stand-in launcher in bb that started the watch, waited for its compile line, then started Bun, and was then SIGKILLed:
+- with only a parent check preloaded into Bun, Bun exited within 1 s, and =bun run=, node and the JVM were all still running 40 s later. Today's =bb dev= orphans the watch the same way, since it runs the watch with =shell= and nothing else;
+- with both children under a guard of this shape, on [2026-10-29 Thu], no process of the project was left 10 s after the SIGKILL, and the port its server held was free.
+
 ** Stopping bb dev stops Bun
 :PROPERTIES:
 :CUSTOM_ID: stop-together
@@ -411,7 +431,9 @@ The report is one line, such as =[bb dev] bun exited with code 1 after 0.4s; wai
 
 Bound: when the launcher exits on SIGINT or SIGTERM, or because its watch exited, it stops Bun and its watch before it exits: SIGTERM, then a forced kill after 2 s. A watch that exits on its own makes the launcher exit non-zero, reporting the watch's exit code. Stopping its watch stops only the build it watches: a server it attached to keeps running, with that server's other builds ([[#attached-watch]]).
 
-A SIGKILL to the launcher is outside the bound: no process can act on its own SIGKILL. Bun outlives it, up and disconnected once the watch is gone ([[#run-output-directly]]), and the watch may outlive it too ([[#reads-watch-output]]). This is upstream's position for any runtime started by hand.
+A SIGKILL to the launcher alone is covered by the guards instead ([[#guard-children]]): Bun and the watch get SIGTERM within about 1 s, and SIGKILL 2 s after that.
+
+Outside the bound: a SIGKILL that reaches the guards themselves, such as one sent to the launcher's whole process group. The guards die with the launcher, and the children, each in a group of its own, outlive them: Bun up and disconnected once the watch is gone ([[#run-output-directly]]), the watch running until something stops it. This follows from the guards' design and was not observed. It is upstream's position for any process started by hand.
 
 * The consumers                                                    :normative:
 
@@ -598,6 +620,7 @@ Polling the server's port before starting Bun adds nothing. The server is up bef
 * Left to the builder
 
 - The launcher's interface: how a consumer's =bb dev= names the build, the output file and the watch command. Explicit arguments are simplest; reading =shadow-cljs.edn= needs its reader tags handled.
+- How the launcher finds the guard script, which ships in bunbushka's jar but must run as a file under =bun= ([[#guard-children]]).
 - How bb consumes bunbushka: a Maven dependency pulls the jar's own dependencies onto bb's classpath. Check what that costs, and use a =:deps/root= or a separate artifact if it is heavy.
 - The launcher's tests: a fake watch that prints the compile lines on cue and a fake runtime script that exits on cue cover [[#start-after-compile]], [[#restart-policy]] and [[#stop-together]] without shadow or Bun.
 - Sorting =src/repl/shadow/cljs/js_runtime_test.clj= and =server_test_runner.clj= into what tests the selector, which stays, and what tests the managed runtime, which goes. The bootstrap's tests go, since the launcher runs the output directly ([[#run-output-directly]]).
