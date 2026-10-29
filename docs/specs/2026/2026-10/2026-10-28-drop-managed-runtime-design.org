@@ -275,10 +275,35 @@ The managed runtime made that routine, but it does not cause it. A Bun that cras
 :PROPERTIES:
 :CUSTOM_ID: keep-printer-fix
 :KIND: decision
-:EVIDENCE: ev-fork-footprint ev-build-lines
+:EVIDENCE: ev-fork-footprint ev-printer-buffer
 :END:
 
-The fork's change to the worker output printer in =shadow.cljs.devtools.server.util= stays. Upstream's printer buffers one message and drops it when the next one overtakes it, a build failure included. The fork's buffer holds 1024 and never queues verbose-only =:build-log= events. The launcher reads the printed compile lines ([[#reads-watch-output]]), so a dropped =Build completed.= line would leave Bun unstarted. The fix is upstream material on its own merits and is no part of the managed runtime.
+The fork's change to the worker output printer in =shadow.cljs.devtools.server.util= stays. Upstream's printer buffers one message and drops it when the next one overtakes it, a build failure included. The fork's buffer holds 1024 and never queues verbose-only =:build-log= events:
+
+#+name: ev-printer-buffer
+#+begin_src shell :results output
+set -e
+set -o pipefail
+# The printer channel in stdout-dump, at the fork's last upstream merge
+# and at the fork's fixed commit.
+for c in f2fbb3a9ba7be3f91ff386039020a1632646e458 ae2f64e999fdc810ef950f6b61e444be472e5475; do
+  echo "${c:0:8}:"
+  git -C ~/dev/my/shadow-cljs show "${c}:src/main/shadow/cljs/devtools/server/util.clj" \
+    | grep -n -e '(defn stdout-dump' -e 'sliding-buffer' -e ':build-log (:type %)' \
+    | sed 's/^/  /'
+done
+#+end_src
+
+#+RESULTS: ev-printer-buffer
+: f2fbb3a9:
+:   211:(defn stdout-dump [verbose]
+:   213:        (-> (async/sliding-buffer 1)
+: ae2f64e9:
+:   211:(defn stdout-dump [verbose]
+:   220:          (async/sliding-buffer 1024)
+:   221:          (remove #(and (not verbose) (= :build-log (:type %)))))]
+
+The launcher reads the printed compile lines ([[#reads-watch-output]]), so a dropped =Build completed.= line would leave Bun unstarted. The fix is upstream material on its own merits and is no part of the managed runtime.
 
 * The launcher                                                     :normative:
 
@@ -296,10 +321,28 @@ The launcher is one bb namespace shipped in bunbushka, published as =com.exidia/
 :PROPERTIES:
 :CUSTOM_ID: reads-watch-output
 :KIND: decision
-:EVIDENCE: ev-consumer-entry ev-build-lines
+:EVIDENCE: ev-consumer-entry ev-build-lines ev-printer-stderr
 :END:
 
-The launcher runs the consumer's watch command, =bun run --bun shadow-cljs watch <build>=, as its child, copies the child's stdout and stderr to its own stdout unchanged, and reads both line by line. Both, because a watch that starts its own server prints its compile lines on stderr: a stand-in reading only stdout never saw =[:dev] Build completed.= on [2026-10-28 Wed], and saw it once it read stderr too. A line starting =[:<build>] Build completed.= is a successful compile of the watched build; =[:<build>] Build failure:= is a failed one. These come from =shadow.cljs.devtools.server.util=, and it is the only coupling the launcher has to shadow. tmk accepted this on [2026-10-28 Wed]; the alternatives are [[#rejected-build-hook]] and [[#rejected-mtime]].
+The launcher runs the consumer's watch command, =bun run --bun shadow-cljs watch <build>=, as its child, copies the child's stdout and stderr to its own stdout unchanged, and reads both line by line. Both, because the printer writes the compile lines with =*out*= bound to =*err*=:
+
+#+name: ev-printer-stderr
+#+begin_src shell :results output
+set -e
+set -o pipefail
+# The printer's output binding and its build-complete branch, in
+# shadow.cljs.devtools.server.util at the fork's fixed commit.
+git -C ~/dev/my/shadow-cljs show ae2f64e999fdc810ef950f6b61e444be472e5475:src/main/shadow/cljs/devtools/server/util.clj \
+  | grep -n -e '(defn print-worker-out' -e '(binding \[\*out\* \*err\*\]' -e '(print-build-complete x)' -e '(print-build-failure x)'
+#+end_src
+
+#+RESULTS: ev-printer-stderr
+: 145:(defn print-worker-out [x verbose]
+: 149:      (binding [*out* *err*]
+: 162:          (print-build-failure x)
+: 165:          (print-build-complete x)
+
+A stand-in reading only stdout never saw =[:dev] Build completed.= on [2026-10-28 Wed], and saw it once it read stderr too. A line starting =[:<build>] Build completed.= is a successful compile of the watched build; =[:<build>] Build failure:= is a failed one. These come from =shadow.cljs.devtools.server.util=, and it is the only coupling the launcher has to shadow. tmk accepted this on [2026-10-28 Wed]; the alternatives are [[#rejected-build-hook]] and [[#rejected-mtime]].
 
 The coupling's failure is loud. If upstream rewords the line, Bun never starts: no =[bun]= line appears, and =(shadow/repl :dev)= reports no available JS runtime.
 
@@ -377,12 +420,54 @@ So a Bun whose client gave up retrying, or was rejected as stale, stays up and d
 :PROPERTIES:
 :CUSTOM_ID: start-after-compile
 :KIND: guarantee
-:EVIDENCE: ev-build-lines ev-client-signals ev-bun-refused
+:EVIDENCE: ev-build-lines ev-flush-then-complete ev-cli-start-order ev-client-signals ev-bun-refused
 :END:
 
 Bound: the launcher starts Bun only after the watch it started has printed =Build completed.= for the build it was given. It never starts Bun on an output file left by an earlier watch. Such a file would connect, be rejected as =Stale Output!=, and stop retrying for good ([[#launcher-ground]]).
 
-Trust boundary: the line means the build's output is written. The printer prints it after the flush stage, in =shadow.cljs.devtools.server.util=. A Bun started then finds the server already listening, since the CLI's watch starts the server before its first compile. Were the server late, the client's own retry covers about 15 s, and it works under Bun ([[#launcher-ground]]). The launcher adds no readiness check of its own ([[#rejected-readiness-check]]).
+Trust boundary: the line means the build's output is written. The worker sends the =:build-complete= message the printer turns into that line only after =build/flush= has returned:
+
+#+name: ev-flush-then-complete
+#+begin_src shell :results output
+set -e
+set -o pipefail
+# In the worker's build-compile*, the flush comes before the
+# build-complete message is built and sent to the output channel, at the
+# fork's fixed commit.
+git -C ~/dev/my/shadow-cljs show ae2f64e999fdc810ef950f6b61e444be472e5475:src/main/shadow/cljs/devtools/server/worker/impl.clj \
+  | grep -n -e '(defn build-compile\*' -e '(build/flush)' -e 'msg {:type :build-complete' -e '(>!!output worker-state msg)'
+#+end_src
+
+#+RESULTS: ev-flush-then-complete
+: 354:(defn build-compile*
+: 374:                (build/flush)
+: 381:              msg {:type :build-complete
+: 384:          (>!!output worker-state msg)
+
+A Bun started then finds the server already listening. A CLI watch that owns its server calls =start!=, which starts the HTTP server through =start-system=, before it calls =watch-builds=; an attached watch finds a server already up:
+
+#+name: ev-cli-start-order
+#+begin_src shell :results output
+set -e
+set -o pipefail
+# In shadow.cljs.devtools.server at the fork's fixed commit: start-system
+# starts HTTP, start! calls start-system, and from-cli calls start! before
+# watch-builds. Upstream's code, unchanged by the fork.
+git -C ~/dev/my/shadow-cljs show ae2f64e999fdc810ef950f6b61e444be472e5475:src/main/shadow/cljs/devtools/server.clj \
+  | grep -n -e '(defn start-system' -e '(start-http config http-config app-ref)' -e '(defn start!' -e '(start-system ' \
+            -e '(defn from-cli' -e '(start!))' -e '(watch-builds config build-configs options)'
+#+end_src
+
+#+RESULTS: ev-cli-start-order
+: 206:(defn start-system
+: 232:        (start-http config http-config app-ref)
+: 422:(defn start!
+: 536:               (start-system runtime/instance-ref app sys-config)
+: 645:(defn from-cli [action builds {:keys [verbose] :as options}]
+: 669:            (start!))
+: 681:              (watch-builds config build-configs options)
+
+Were the server late, the client's own retry covers about 15 s, and it works under Bun ([[#launcher-ground]]). The launcher adds no readiness check of its own ([[#rejected-readiness-check]]).
 
 ** Bun's output is interleaved into bb dev's, prefixed
 :PROPERTIES:
@@ -626,7 +711,7 @@ The launcher could print a line once Bun's client prints =ready!=, for callers t
 :PROPERTIES:
 :CUSTOM_ID: rejected-readiness-check
 :KIND: rejection
-:EVIDENCE: ev-client-signals ev-bun-refused
+:EVIDENCE: ev-cli-start-order ev-client-signals ev-bun-refused
 :END:
 
 Polling the server's port before starting Bun adds nothing. The server is up before the first =Build completed.= line, and the client retries a refused connection for about 15 s under Bun as under Node.
