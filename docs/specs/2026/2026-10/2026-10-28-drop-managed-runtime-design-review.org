@@ -12,7 +12,7 @@
 |---------------------------------------------------------------------------------+-------------+---------+----------|
 | Round 1                                                                         |             |         |          |
 | Finding 1 — [P1] Keep guards alive until descendant cleanup finishes            | fixed       | new     | [[orgit-rev:~/dev/my/shadow-cljs::33b43696bc1deca14094d3212077ed1a97a67b40][33b43696]] |
-| Finding 2 — [P2] Define shutdown when bb dev owns the shared server             |             |         |          |
+| Finding 2 — [P2] Define shutdown when bb dev owns the shared server             | fixed       | new     | [[orgit-rev:~/dev/my/shadow-cljs::ebc3a220db5c769e2f0664c5f747e2d714512a0d][ebc3a220]] |
 | Finding 3 — [P2] Establish the ordering behind the compile-line guarantee       | fixed       | new     | [[orgit-rev:~/dev/my/shadow-cljs::581e765b8727599ab82bbc647faa0f7f01eb7f08][581e765b]] |
 | Finding 4 — [P2] Preserve executable evidence for the observed lifecycle claims | fixed       | new     | [[orgit-rev:~/dev/my/shadow-cljs::73ceb1289c9f70167e49c6b5107bcabed3021685][73ceb128]] |
 | Finding 5 — [P2] Make evidence pipelines fail when their source lookup fails    | fixed       | new     | [[orgit-rev:~/dev/my/shadow-cljs::47dba77d480f4439c66c79b332731c2f7af1006a][47dba77d]] |
@@ -75,6 +75,9 @@ Define cleanup precedence over immediate-child exit, including spontaneous exits
 :RAW_FILE: docs/specs/2026/2026-10/2026-10-28-drop-managed-runtime-design.org
 :RAW_LINES: 434-434
 :LOCATION: [[orgit-blob:~/dev/my/shadow-cljs::aa24ed3b08688f34a9176e6edcc8066ab32fbede/docs/specs/2026/2026-10/2026-10-28-drop-managed-runtime-design.org#434-434]]
+:SURFACE: new
+:DISPOSITION: fixed
+:COMMIT: [[orgit-rev:~/dev/my/shadow-cljs::ebc3a220db5c769e2f0664c5f747e2d714512a0d][ebc3a220]]
 :END:
 #+begin_example
 The document promises coexistence in either start order, but records only the case where continuous testing starts the server first. In the reverse order, the JVM belongs to bb dev's guarded process group. The specified group shutdown therefore also terminates the server hosting the later test watch. The statement that stopping its watch stops only its build needs an ownership qualification.
@@ -90,6 +93,8 @@ Specify the intended reverse-order shutdown behavior and its boundary, then reco
 - Position: material and new, and correct as stated. It is not a regression: today's =bb dev= owns the server the same way. "Either start order" over-claims for shutdown.
 - Options: (a, lean, subtractive) qualify both rows: whichever command started the server owns it, and stopping that command stops the other's builds too, as upstream shadow does today; record the owning case as observed. (b) Make the launcher refuse to own the server, for example by starting a separate =shadow-cljs server= first. That adds a process and a mode for a case nobody has hit.
 - Question: qualify the two rows with the ownership rule, as in (a)?
+
+*Action.* Fixed as (a), routed in bulk. The attached-watch row keeps "in either start order" for running side by side and adds the ownership rule for stopping: whichever command started the server owns it, and stopping it stops every attached watch; it cites [[id:20261029T182039.858528][the lifecycle spike]]'s round 4, where stopping an owning =watch dev= made the attached =watch test= exit and stop rewriting =out/test.js=, and round 3 for the other order. The stop-together bound now says its watch stops only its own build when attached, and takes the server and its attached watches down when it owns the server. Recommendation verification: the reviewer asked for evidence of both start orders; rounds 3 and 4 are those, run clean by =bd org spike-verify=. Residue sweep: =grep -n 'only the build it watches'= over the spec finds the one, now qualified, sentence. Audit green.
 
 ** Finding 3 — [P2] Establish the ordering behind the compile-line guarantee
 :PROPERTIES:
