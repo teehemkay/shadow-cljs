@@ -14,6 +14,7 @@
 | Finding 1 — [P2] Reconcile the documentation grep with the required historical section       | fixed       | new     | [[orgit-rev:~/dev/my/shadow-cljs::56e99adbfe01d4f22a61b45447baf57f816ef17e][56e99adb]] |
 | Finding 2 — [P2] Prove that the first-compile evaluation answers before compilation finishes | fixed       | new     | [[orgit-rev:~/dev/my/shadow-cljs::6f0944a0734b57ad92584e0861a897e4fd4d2339][6f0944a0]] |
 | Round 2                                                                                      |             |         |          |
+| Round 3                                                                                      |             |         |          |
 #+END:
 
 * Round 1
@@ -113,6 +114,27 @@ Reviewed [[orgit-blob:~/dev/my/shadow-cljs::5e7adad1ac8d54f9873f676a65a5e971805f
 
 #+begin_example
 tmk, looks good. Both prior findings are resolved, and the updated plan introduces no further material contradictions or verification gaps. Reviewed only the target plan, using the prior review as context. No files changed.
+#+end_example
+
+* Round 3
+:PROPERTIES:
+:CUSTOM_ID: r3
+:DISPATCHED: [2026-10-30 Fri 07:04]
+:REVIEWED_AT: d773972219d6e7f156185a3bff6731475b552657
+:PROMPT: [[my:shadow-cljs/docs/plans/2026/2026-10/2026-10-29-drop-managed-runtime-review-rounds/2026-10-29-drop-managed-runtime-review-round-03-prompt.md]]
+:RESULT: [[my:shadow-cljs/docs/plans/2026/2026-10/2026-10-29-drop-managed-runtime-review-rounds/2026-10-29-drop-managed-runtime-review-round-03-result.json]]
+:REVIEWER: codex
+:REVIEWER_VERSION: codex-cli 0.165.0
+:REVIEWER_MODEL: gpt-6-astra
+:REVIEWER_EFFORT: medium
+:REVIEWER_ISOLATED: yes
+:VERDICT: approve
+:FINDINGS: 0
+:END:
+Reviewed [[orgit-blob:~/dev/my/shadow-cljs::d773972219d6e7f156185a3bff6731475b552657/docs/plans/2026/2026-10/2026-10-29-drop-managed-runtime.org][the artefact at d7739722]].
+
+#+begin_example
+tmk, looks good. Both prior fixes remain consistent with the plan’s tests and acceptance checks. No further material findings in the target file. No files changed.
 #+end_example
 
 
