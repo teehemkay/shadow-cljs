@@ -275,7 +275,7 @@ Inputs no task's tests leave alone are the ones a reviewer should check stay cov
 
 The namespace names no var that does not exist yet, so no stub step is needed: it loads against today's code and every assertion runs.
 
-- [ ] *Step 3: RED in the REPL.* Start the REPL and the server per Global Constraints § The REPL, then =(require 'shadow.cljs.js-runtime-watch-test)= and =(clojure.test/run-tests 'shadow.cljs.js-runtime-watch-test)=. Expected: =Ran 6 tests containing 11 assertions.= =5 failures, 0 errors.= The failures:
+- [ ] *Step 3: RED in the REPL.* Start the REPL and the server per the REPL bullet of Global Constraints, then =(require 'shadow.cljs.js-runtime-watch-test)= and =(clojure.test/run-tests 'shadow.cljs.js-runtime-watch-test)=. Expected: =Ran 6 tests containing 11 assertions.= =5 failures, 0 errors.= The failures:
   - both cases of =a-watched-build-starts-no-process=: a runtime connected;
   - the =:err= assertion of =an-eval-without-a-runtime-fails-at-once= and of =an-eval-during-the-first-compile-gets-no-runtime=, each getting ={:out ":unreachable\n"}= from the managed process;
   - the first-compile test's last assertion: today's eval waited for the compile and its process, so the compile had finished by the time it answered.
@@ -410,7 +410,7 @@ git commit -m "feat!: a watched build starts no process; the fork drops the mana
 - [ ] *Step 3: =doc/js-runtime-architecture.md=.*
   - Delete the =managed-runtime?= table row, § Bootstrap, § Managed Runtime Lifecycle and § The REPL side.
   - Data Flow: the middle column ends at the compile; nothing in the fork starts a process for it.
-  - Runtime Connection: a process running the output stays alive through the client's own 1 s idle interval (=shadow.cljs.devtools.client.shared/start-idle= sets it; =stop-runtime!= alone clears it), so a client that gave up retrying leaves the process up and disconnected.
+  - Runtime Connection: a process running the output stays alive through the client's own 1 s idle interval (=shadow.cljs.devtools.client.shared/init-runtime!= sets it; =stop-runtime!= alone clears it), so a client that gave up retrying leaves the process up and disconnected.
   - Process Ownership: the watched-build row's owner is whatever started the output.
   - Scope, Future Considerations and Extension Points lose every mention of the bootstrap and of =start-managed-runtime=.
   - Add a short section whose heading reads exactly =Rejected: a managed runtime=, since step 6 finds it by that title, in the doc's own "built and removed" style: earlier fork releases started and stopped a process per watched build in the worker; it cost most of the fork's diff against upstream and the conflict surface of every sync, so starting the output moved out of the JVM. Cite the design by its path, =docs/specs/2026/2026-10/2026-10-28-drop-managed-runtime-design.org=, since Markdown cannot follow an org id.
@@ -456,5 +456,5 @@ Run before the handoff, each check mechanical:
 
 - *Spec coverage.* =drop-managed-runtime=: Task 1 (code, suite, CI, publishing doc), Task 2 (docs, the limitations' closure). =keep-selector=: Task 1 keeps every selector helper but the two predicates only the managed runtime called, with =js_runtime_test=, =bun_runtime_test= and the =node-repl= test green. =keep-guarded-handler= and =keep-printer-fix=: untouched, but for the handler's docstring in Task 2. "Left to the builder": the =js_runtime_test= sort and the server runner's docstring (Task 1), the two docs (Task 2). The launcher, consumers and agent-skills belong to later plans.
 - *Files against =git add=.* Each Commit step's =git add= lists exactly its task's Files paths, deletions included.
-- *Log line.* Every run step cites Global Constraints § The log line, which assigns =LOG=.
+- *Log line.* Every run step cites the log-line bullet of Global Constraints, which assigns =LOG=.
 - *Counts.* The RED and GREEN tallies, the =lein test= tally, the =repl_impl.clj= numstat and the Task 2 grep count come from the plan spike's rounds, not from arithmetic.
