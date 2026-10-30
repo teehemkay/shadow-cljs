@@ -6,11 +6,11 @@ This is the live status of the Bun fork of shadow-cljs, published as =org.clojar
 
 *Keep this document current.* Whenever an effort changes status, update the status board and that effort's section in the same change that does the work.
 
-Last updated: [2026-10-29 Thu 22:45] — the fork's plan to drop the managed runtime is written, spiked clean and on =master=, unreviewed and unexecuted. Next: =/apr= on the plan, after tmk confirms the test deletions it makes.
+Last updated: [2026-10-30 Fri 07:05] — the fork's plan to drop the managed runtime converged in review after 3 rounds. Next: execute it, once tmk picks native (recommended) or subagent-driven.
 
 * Where we are in the chain
 
-- *Drop the managed runtime:* spec converged (=/asr=), =/wrp= done for release step 1, the fork. Next ritual: =/apr= on [[my:shadow-cljs/docs/plans/2026/2026-10/2026-10-29-drop-managed-runtime.org][the plan]], then execution. bunbushka's launcher and the consumers' switch need plans of their own, written in those repos.
+- *Drop the managed runtime:* spec converged (=/asr=), =/wrp= done for release step 1, the fork. [[my:shadow-cljs/docs/plans/2026/2026-10/2026-10-29-drop-managed-runtime.org][The plan]] converged in a human-paced review (=/prr=, 3 rounds). Next ritual: execution. bunbushka's launcher and the consumers' switch need plans of their own, written in those repos.
 - *Releases:* =3.5.7-bun.2= is the latest on Clojars; kiln is on it, ik and bunbushka on =3.5.7-bun=. Upstream is at 3.5.8; the spec lets that sync ride along with the fork's next release, tmk's call.
 
 * Status board
@@ -22,7 +22,7 @@ Legend: *DONE* shipped · *IN PROGRESS* actively building · *PAUSED* set aside 
 | Sync to upstream 3.5.7           | *DONE*        | Released as =3.5.7-bun=; two conflicts, CI green                  |
 | Consumers on the fork's latest   | *DONE*        | kiln, ik, bunbushka on =3.5.7-bun=; organon on npm =3.5.7=        |
 | First-compile wait               | *DONE*        | Released as =3.5.7-bun.2=; kiln on it, verifier test green        |
-| Drop the managed runtime         | *IN PROGRESS* | Spec converged; fork's plan spiked clean, awaiting =/apr=          |
+| Drop the managed runtime         | *IN PROGRESS* | Fork's plan converged; awaiting execution                         |
 | Runtime's two known limitations  | *DEFERRED*    | Closes with the managed runtime's removal (plan Task 2)           |
 | Offer the handler to shadow-http | *DEFERRED*    | Would retire the fork's copy; two shadow-http close limits        |
 
@@ -39,20 +39,22 @@ This section says the same thing as the rest of the document for a reader who do
 - Worker :: shadow-cljs's per-build process that compiles and owns that runtime.
 - Upstream sync :: merging the original project's newer releases into the fork.
 
-*Where we are right now.* Keeping the Bun process alive inside shadow-cljs turned out to cost more than it was worth: most of the fork's changes, and a conflict at every upstream update. The fork will stop doing it and keep only the setting that chooses Bun. A small script shared by every project will start Bun instead, so the daily workflow stays the same. The fork's half is planned and waiting for review.
+*Where we are right now.* Keeping the Bun process alive inside shadow-cljs turned out to cost more than it was worth: most of the fork's changes, and a conflict at every upstream update. The fork will stop doing it and keep only the setting that chooses Bun. A small script shared by every project will start Bun instead, so the daily workflow stays the same. The fork's half is planned, reviewed and ready to build.
 
 * Detailed status
 
 ** Drop the managed runtime — IN PROGRESS
 
-*Takeaway:* the design converged on [2026-10-29 Thu], and the fork's plan is written and spiked clean. Next is =/apr= on the plan, once tmk answers the open questions below.
+*Takeaway:* the design converged on [2026-10-29 Thu], and the fork's plan converged in review on [2026-10-30 Fri]. Next is executing it.
 - *What it decides.* The fork keeps the =:js-runtime= selector and starts no process for a watched build. A bb launcher in bunbushka starts, restarts and stops Bun, and the consumers' =bb dev= calls it. [[id:20261028T164829.836099][The design]] carries the evidence and the review record.
 - *Release order.* (1) the fork releases without the managed runtime; (2) bunbushka ships the launcher and its template; (3) kiln and ik switch, and agent-skills' skill is rewritten. One plan per step, ruled by tmk.
 - *Step 1's plan.* [[id:20261029T220537.596609][Two tasks]]: Task 1 restores =worker.clj= and =worker/impl.clj= to upstream, trims =repl_impl.clj= to its =node-repl*= hunks, and replaces the managed suite with =shadow.cljs.js-runtime-watch-test=; Task 2 rewrites the docs. [[my:shadow-cljs/docs/explorations/2026/2026-10/2026-10-29-drop-managed-runtime-plan-spike.org][Its plan spike]] replays both tasks in order and verifies clean.
-- *Open for tmk:*
-  - Confirm the test deletions by name: =managed_runtime_test.clj= and its three probes, plus =test-managed-runtime-is-opt-in= and =test-bootstrap-source-keeps-runtime-alive=.
-  - Accept two removals beyond the spec's list: =explicit-js-runtime?=, and =node-repl*='s filtering of =:js-runtime=.
-  - Choose execution: native (recommended) or subagent-driven.
+- *Review.* [[my:shadow-cljs/docs/plans/2026/2026-10/2026-10-29-drop-managed-runtime-review.org][The record]] holds 3 rounds:
+  - Round 1 found two gaps, both fixed: the docs grep contradicted the history section Task 2 adds, and the first-compile test checked the compile before the eval rather than after.
+  - Round 2 approved.
+  - The first close attempt's citation check found a function name the plan had invented (=start-idle=; the real one is =init-runtime!=) and two references to bullets as headings. Fixed, and round 3 approved.
+- *Decided by tmk on [2026-10-29 Thu]:* the test deletions by name, and the two removals beyond the spec's list (=explicit-js-runtime?=, =node-repl*='s =:js-runtime= filtering).
+- *Open for tmk:* the execution method, native (recommended) or subagent-driven.
 
 ** Sync to upstream 3.5.7 — DONE
 

@@ -37,6 +37,9 @@ Next: decide which pom path the two =find-version= functions look up, and change
 :ID:       20261024T174047.298693
 :END:
 :LOGBOOK:
+- Note taken on [2026-10-30 Fri 07:05] \\
+  Next: execute [[id:20261029T220537.596609][the fork's plan]], native or subagent-driven by tmk's pick.
+  - The plan converged in =/prr= after 3 rounds; tmk confirmed its test deletions and its two removals beyond the spec.
 - Note taken on [2026-10-29 Thu 22:45] \\
   Next: =/apr= on [[id:20261029T220537.596609][the fork's plan]], after tmk confirms the test deletions it makes.
   - Decided by [[id:20261028T164829.836099][the drop-managed-runtime design]], converged today: the fork drops the managed runtime, and a bb launcher in bunbushka starts Bun.
