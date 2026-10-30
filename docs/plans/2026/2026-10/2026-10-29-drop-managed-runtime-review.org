@@ -15,6 +15,8 @@
 | Finding 2 — [P2] Prove that the first-compile evaluation answers before compilation finishes | fixed       | new     | [[orgit-rev:~/dev/my/shadow-cljs::6f0944a0734b57ad92584e0861a897e4fd4d2339][6f0944a0]] |
 | Round 2                                                                                      |             |         |          |
 | Round 3                                                                                      |             |         |          |
+| Converged — [2026-10-30 Fri]                                                                 |             |         |          |
+| Resolution                                                                                   |             |         |          |
 #+END:
 
 * Round 1
@@ -136,5 +138,73 @@ Reviewed [[orgit-blob:~/dev/my/shadow-cljs::d773972219d6e7f156185a3bff6731475b55
 #+begin_example
 tmk, looks good. Both prior fixes remain consistent with the plan’s tests and acceptance checks. No further material findings in the target file. No files changed.
 #+end_example
+
+* Converged — [2026-10-30 Fri]
+:PROPERTIES:
+:VERDICT: approve
+:RESOLVED: 56
+:UNRESOLVED: 0
+:TRAJECTORY: 2/0/0
+:LAST_MATERIAL_ROUND: 1
+:END:
+Natural close: round 3 approved with no findings. It reviewed the plan at d7739722, after the first close attempt's resolution check found three unresolved citations and they were fixed: Task 2 step 3 named a nonexistent =start-idle= where =init-runtime!= sets the idle interval, and two steps cited Global Constraints bullets as if they were headings.
+
+** Resolution
+- [[my:shadow-cljs/docs/clojars-publishing.org::*Releasing a new version]] :: resolved
+- [[my:shadow-cljs/docs/explorations/2026/2026-10/2026-10-29-drop-managed-runtime-plan-spike.org::#round-1]] :: resolved
+- [[my:shadow-cljs/docs/explorations/2026/2026-10/2026-10-29-drop-managed-runtime-plan-spike.org::#round-2]] :: resolved
+- [[my:shadow-cljs/docs/explorations/2026/2026-10/2026-10-29-drop-managed-runtime-plan-spike.org::#round-3]] :: resolved
+- [[my:shadow-cljs/docs/explorations/2026/2026-10/2026-10-29-drop-managed-runtime-plan-spike.org::#round-4]] :: resolved
+- [[my:shadow-cljs/docs/specs/2026/2026-10/2026-10-28-drop-managed-runtime-design.org::#drop-managed-runtime]] :: resolved
+- [[my:shadow-cljs/docs/specs/2026/2026-10/2026-10-28-drop-managed-runtime-design.org::#keep-selector]] :: resolved
+- [[my:shadow-cljs/docs/specs/2026/2026-10/2026-10-28-drop-managed-runtime-design.org::#release-order]] :: resolved
+- [[my:shadow-cljs/docs/explorations/2026/2026-10/2026-10-29-drop-managed-runtime-plan-spike.org]] :: resolved
+- [[my:shadow-cljs/docs/specs/2026/2026-10/2026-10-28-drop-managed-runtime-design.org]] :: resolved
+- [[id:20261018T195432.672778]] :: resolved
+- [[id:20261028T164829.836099]] :: resolved
+- [[my:shadow-cljs/doc/js-runtime-architecture.md::Bootstrap — ][doc/js-runtime-architecture.md § Bootstrap]] :: resolved
+- [[my:shadow-cljs/doc/js-runtime-architecture.md::Managed Runtime Lifecycle — ][doc/js-runtime-architecture.md § Managed Runtime Lifecycle]] :: resolved
+- [[my:shadow-cljs/doc/js-runtime-architecture.md::The REPL side — ][doc/js-runtime-architecture.md § The REPL side]] :: resolved
+- [[my:shadow-cljs/doc/js-runtime.md::Watched builds and REPL][doc/js-runtime.md § Watched builds and REPL]] :: resolved
+- [[my:shadow-cljs/doc/js-runtime.md::CLI usage][doc/js-runtime.md § CLI usage]] :: resolved
+- [[my:shadow-cljs/docs/clojars-publishing.org::*Syncing to a new upstream version][docs/clojars-publishing.org § Syncing to a new upstream version]] :: resolved
+- [[my:shadow-cljs/docs/plans/2026/2026-10/2026-10-29-drop-managed-runtime.org::*Global Constraints][Global Constraints, its REPL and log-line bullets]] :: resolved
+- [[my:shadow-cljs/docs/specs/2026/2026-10/2026-10-28-drop-managed-runtime-design.org::#keep-guarded-handler][keep-guarded-handler]] :: resolved
+- [[my:shadow-cljs/docs/specs/2026/2026-10/2026-10-28-drop-managed-runtime-design.org::#keep-printer-fix][keep-printer-fix]] :: resolved
+- =explicit-js-runtime?= :: resolved
+- =managed-runtime?= :: resolved
+- =shared/explicit-js-runtime?= :: resolved
+- =shared/managed-runtime?= :: resolved
+- =impl/build-compile*= :: resolved
+- =impl/managed-build?= :: resolved
+- =impl/managed-runtime-connect-ms= :: resolved
+- =impl/managed-runtime-running?= :: resolved
+- =impl/start-managed-runtime= :: resolved
+- =start-managed-runtime= :: resolved
+- =impl/start-managed-runtime-after-build= :: resolved
+- =impl/stop-managed-runtime= :: resolved
+- =worker/await-managed-runtime= :: resolved
+- =no-runtime-reason= :: resolved
+- =node-repl*= :: resolved
+- =super/start-worker= :: resolved
+- =stop-runtime!= :: resolved
+- =shadow.cljs.devtools.client.shared/init-runtime!= :: resolved
+- =capturing-send-failures= :: resolved
+- =test-bootstrap-source-keeps-runtime-alive= :: resolved
+- =test-managed-runtime-is-opt-in= :: resolved
+- =shadow.build.targets.shared= :: resolved
+- =shadow.cljs.devtools.server.js-runtime= :: resolved
+- =shadow.cljs.devtools.server.web.websocket= :: resolved
+- =shadow.cljs.managed-runtime-test= :: resolved
+- =shadow.cljs.bun-runtime-test= :: resolved
+- =:repl-tests= :: resolved
+- =a-runtime-started-on-the-output-is-evaluated-in= :: resolved
+- =a-watched-build-starts-no-process= :: resolved
+- =an-eval-during-the-first-compile-gets-no-runtime= :: resolved
+- =an-eval-without-a-runtime-fails-at-once= :: resolved
+- =node-repl-evaluates-under-the-selected-runtime= :: resolved
+- =shadow.cljs.js-runtime-watch-test= :: resolved
+- =src/main= :: resolved
+- =src/repl= :: resolved
 
 
